@@ -48,7 +48,7 @@ export default function PacksPage() {
               <tr><td colSpan={7} className="px-3 py-10 text-center text-white/20 text-sm">Aucun pack. Cliquez sur « Créer un pack familial ».</td></tr>
             ) : packs.map(p => (
               <tr key={p.id} className="border-b border-white/5 hover:bg-white/5">
-                <td className="px-3 py-3 font-medium text-white">{p.name}</td>
+                <td className="px-3 py-3"><div className="flex items-center gap-2">{p.photo ? <img src={p.photo} alt={p.name} className="w-9 h-9 rounded-lg object-cover" /> : <div className="w-9 h-9 rounded-lg bg-[#EA5800]/20 flex items-center justify-center text-sm font-bold text-[#EA5800]">{p.name?.charAt?.(0) || "P"}</div>}<span className="font-medium text-white">{p.name}</span></div></td>
                 <td className="px-3 py-3 font-mono text-xs text-[#EA5800]">{p.price || 0} DH</td>
                 <td className="px-3 py-3 text-white/60">{p.duration || "—"}</td>
                 <td className="px-3 py-3 text-white/60">{p.max_beneficiaries || 3}</td>

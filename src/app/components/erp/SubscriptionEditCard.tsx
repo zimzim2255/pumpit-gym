@@ -2,7 +2,7 @@ import { Dispatch, SetStateAction, useState, useEffect } from "react";
 import { Search, User, Phone, CreditCard, DollarSign, Calendar, Users, Plus } from "lucide-react";
 import ModalCard from "../ui/ModalCard";
 import { InputField, SelectField, FormActions } from "../ui/FormField";
-import { loadAll } from "../../services/programService";
+import { loadAll, getAllInsurance } from "../../services/programService";
 import { SubType } from "../../services/subscriptionService";
 type SubscriptionForm = {
   id: string; member: string; phone: string; type: string; start: string;
@@ -10,6 +10,8 @@ type SubscriptionForm = {
   status: string; payment: string; observation: string;
   activity: string; group: string; cours: string; trainer: string;
   packId: string; insurance: boolean; insuranceShown: string;
+  remise: number;
+  remiseType: string;
   mode: string; memberIds: string[]; packMemberIds: string[]; activityIds: string[]; groupIds: string[]; coursIds: string[];
   packCourses: Record<string, { activityIds: string[]; groupIds: string[]; coursIds: string[] }>;
 };type Prog = { activities: any[]; groups: any[]; cours: any[]; trainers: any[]; packs: any[] };
@@ -28,6 +30,7 @@ interface SubscriptionEditCardProps {
 }
 export default function SubscriptionEditCard({ form, setForm, onClose, onSave, members, subTypes, updateType, updateStart, updatePaid }: SubscriptionEditCardProps) {
   const [prog, setProg] = useState<Prog>(loadProg);
+  const [insByName, setInsByName] = useState<Record<string, number>>({});
   useEffect(() => {
     loadAll().then(db => {
       setProg(db);
@@ -45,6 +48,13 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
         localStorage.setItem("gym_programme_data", JSON.stringify(merged));
       } catch { /* keep current prog */ }
     }).catch(() => {});
+    getAllInsurance().then(r => {
+      const map: Record<string, number> = {};
+      (r?.insurance || []).forEach((row: any) => {
+        if (row?.member) map[row.member] = Number(row.amount) || 300;
+      });
+      setInsByName(map);
+    }).catch(() => {});
   }, []);
   const activities = prog.activities as any[];
   const groups = prog.groups as any[];
@@ -61,8 +71,17 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
   const pack = packs.find(p => p.id === packId);
   const insStore = loadInsurance();
   const selectedPersons = memberIds.concat(packMemberIds).filter((v, i, a) => a.indexOf(v) === i);
-  const assurance = selectedPersons.reduce((sum, name) => sum + (Number(insStore[name]?.premium) || 300), 0);
-  const total = (form.price || 0) + assurance;  const [sMember, setSMember] = useState("");
+  const assurance = selectedPersons.reduce((sum, name) => {
+    const dbVal = Number(insByName[name] || 0);
+    const localVal = Number((insStore as any)[name]?.premium || 0);
+    return sum + (dbVal || localVal || 300);
+  }, 0);
+  const priceBase = form.price || 0;
+  const remiseRaw = Math.max(0, Number(form.remise) || 0);
+  const remise = (form.remiseType || "dh") === "percent"
+    ? Math.min(priceBase, (priceBase * remiseRaw) / 100)
+    : Math.min(priceBase, remiseRaw);
+  const total = priceBase - remise + assurance;  const [sMember, setSMember] = useState("");
   const [sAct, setSAct] = useState("");
   const [sGrp, setSGrp] = useState("");
   const [sCr, setSCr] = useState("");
@@ -236,9 +255,24 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
               <div className="px-2 py-1.5 text-sm rounded bg-white/5 text-white/70">{form.price || 0}</div>
             </div>
             <div>
+              <label className="block text-[11px] text-white/60 mb-1">Remise</label>
+              <div className="flex gap-1.5">
+                <input type="number" min={0} value={form.remise === undefined ? "" : form.remise} onChange={e => setForm({ ...form, remise: Number(e.target.value) || 0 })} placeholder="0" className="w-full min-w-0 px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40" />
+                <select value={form.remiseType || "dh"} onChange={e => setForm({ ...form, remiseType: e.target.value })} className="px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white/70 shrink-0">
+                  <option value="dh">DH</option>
+                  <option value="percent">%</option>
+                </select>
+              </div>
+              <p className="text-[10px] text-white/40">S'applique au prix, pas à l'assurance</p>
+            </div>
+            <div>
               <label className="block text-[11px] text-white/60 mb-1">Assurance (Dhs)</label>
               <div className="px-2 py-1.5 text-sm rounded bg-white/5 text-white/70">{assurance}</div>
             </div>
+          </div>
+          <div className="mt-2 flex justify-between text-[11px] text-white/50">
+            <span>Sous-total (prix − remise)</span>
+            <span className="font-mono">{(form.price || 0) - remise} Dhs</span>
           </div>
           {selectedPersons.length === 0 ? (
             <div className="px-3 py-2 mt-2 rounded bg-white/5 text-white/50 text-[11px]">Assurance appliquee automatiquement selon les adherents selectionnes.</div>

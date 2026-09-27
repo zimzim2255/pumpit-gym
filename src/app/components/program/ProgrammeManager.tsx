@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Pencil, Eye, X, Check, FolderPlus, Search, ChevronLeft, ChevronRight, Clock, User, Phone, DollarSign, Percent, Dumbbell, Users, UserRound, Calendar, Package } from "lucide-react";
+import { Plus, Trash2, Pencil, Eye, X, Check, FolderPlus, Search, ChevronLeft, ChevronRight, Clock, User, Phone, DollarSign, Percent, Dumbbell, UserRound, Calendar, Package } from "lucide-react";
 import ModalCard from "../ui/ModalCard";
-import { loadAll, createActivity, createGroup, createCours, updateCours, deleteCours } from "../../services/programService";
+import { loadAll, createActivity, updateActivity, deleteActivity, createGroup, updateGroup, deleteGroup, createCours, updateCours, deleteCours } from "../../services/programService";
 
 const STORE_KEY = "gym_programme_data";
 type Row = { id: string; [k: string]: any };
@@ -51,11 +51,15 @@ export default function ProgrammeManager() {
   const [showGroup, setShowGroup] = useState(false);
   const [gName, setGName] = useState("");
   const [gItems, setGItems] = useState<string[]>([""]);
+  const [editGroup, setEditGroup] = useState<any>(null);
+  const [editGroupList, setEditGroupList] = useState<any[]>([]);
+  const [confirmDelGroup, setConfirmDelGroup] = useState<any>(null);
+  const [removedGroupIds, setRemovedGroupIds] = useState<string[]>([]);
   const [showAct, setShowAct] = useState(false);
   const [actType, setActType] = useState("");
   const [actActivity, setActActivity] = useState("");
   const [actGroup, setActGroup] = useState("");
-  const [slots, setSlots] = useState<{ day: string; start: string; end: string; trainer: string }[]>([{ day: "Lundi", start: "09:00", end: "10:00", trainer: "" }]);
+  const [slots, setSlots] = useState<{ day: string; start: string; end: string; trainer: string; commissionType: string; commissionValue: string }[]>([{ day: "Lundi", start: "09:00", end: "10:00", trainer: "", commissionType: "percent", commissionValue: "" }]);
 
   const save = (next: any) => { localStorage.setItem(STORE_KEY, JSON.stringify(next)); setStore(next); }; // eslint-disable-line
 
@@ -82,11 +86,20 @@ export default function ProgrammeManager() {
       activityId: aid !== null ? aid : undefined, groupId: gid !== null ? gid : undefined,
       trainerId: s.trainer || null, name: actGroup.trim() || actType.trim(), day: s.day,
       startTime: s.start, endTime: s.end,
-    }))).then(() => reload()).catch(() => {});
-    setShowAct(false); setActType(""); setActActivity(""); setActGroup(""); setSlots([{ day: "Lundi", start: "09:00", end: "10:00", trainer: "" }]);
+      commissionType: s.commissionType || "percent", commissionValue: Number(s.commissionValue) || 0,
+    }))).then(() => {
+      // Ensure the typed "Type d'activité" is saved on the activity itself,
+      // so it persists and displays after reload.
+      if (aid && actType.trim()) {
+        const act = store.activities.find((a: any) => a.id === aid);
+        return updateActivity({ id: aid, name: act?.name, type: actType.trim() });
+      }
+      return Promise.resolve();
+    }).then(() => reload()).catch(() => {});
+    setShowAct(false); setActType(""); setActActivity(""); setActGroup(""); setSlots([{ day: "Lundi", start: "09:00", end: "10:00", trainer: "", commissionType: "percent", commissionValue: "" }]);
   };
   const updSlot = (i: number, k: string, v: string) => setSlots(slots.map((s, j) => j === i ? { ...s, [k]: v } : s));
-  const addSlot = () => setSlots([...slots, { day: "Lundi", start: "09:00", end: "10:00", trainer: "" }]);
+  const addSlot = () => setSlots([...slots, { day: "Lundi", start: "09:00", end: "10:00", trainer: "", commissionType: "percent", commissionValue: "" }]);
   const delSlot = (i: number) => setSlots(slots.filter((_, j) => j !== i));
 const saveEdit = () => {
     if (!editRow) return;
@@ -100,6 +113,41 @@ const saveEdit = () => {
     setEditRow(null);
   };
   const doDelete = () => { if (confirmDel) deleteCours(confirmDel.id).then(() => reload()).catch(() => {}); setConfirmDel(null); };
+  const openEditGroup = (a: any, grps: any[]) => {
+    setEditGroup(a);
+    setEditGroupList(grps.map((g: any) => ({ id: g.id, name: g.name || "" })));
+    setRemovedGroupIds([]);
+    setGName(a.name || "");
+  };
+  const updEditGroupRow = (i: number, name: string) => setEditGroupList(editGroupList.map((g, j) => j === i ? { ...g, name } : g));
+  const delEditGroupRow = (i: number) => {
+    const g = editGroupList[i];
+    if (g?.id) setRemovedGroupIds([...new Set([...removedGroupIds, g.id])]);
+    setEditGroupList(editGroupList.map((x, j) => j === i ? { ...x, name: "" } : x));
+  };
+  const addEditGroupRow = () => setEditGroupList([...editGroupList, { id: null, name: "" }]);
+  const saveGroupEdit = () => {
+    if (!editGroup || !gName.trim()) return;
+    const tasks: Promise<any>[] = [updateActivity({ id: editGroup.id, name: gName.trim() })];
+    // Delete groups that were removed in the modal.
+    removedGroupIds.forEach(id => tasks.push(deleteGroup(id)));
+    // Update existing / create newly added groups.
+    editGroupList.forEach((g: any) => {
+      const n = (g.name || "").trim();
+      if (g.id) { if (n) tasks.push(updateGroup({ id: g.id, name: n })); }
+      else if (n) tasks.push(createGroup({ name: n, activityId: editGroup.id }));
+    });
+    Promise.all(tasks).then(() => { setEditGroup(null); setEditGroupList([]); setRemovedGroupIds([]); reload(); });
+  };
+  const doDeleteGroup = () => {
+    if (!confirmDelGroup) return;
+    const actId = confirmDelGroup.id;
+    const grps = store.groups.filter((g: any) => g.activity_id === actId);
+    const tasks: Promise<any>[] = grps.map((g: any) => deleteGroup(g.id));
+    tasks.push(deleteActivity(actId));
+    Promise.all(tasks).then(() => reload()).catch(() => {});
+    setConfirmDelGroup(null);
+  };
 
   const all = displayRows(store).sort((a, b) => ((DAY_ORDER[a.jour] || 9) - (DAY_ORDER[b.jour] || 9)) || String(a.activite).localeCompare(String(b.activite)));
   const filtered = all.filter(r =>
@@ -195,14 +243,14 @@ const rowsHead = (hasNum: boolean) => (
                   list.push((<tr key={a.id} className="border-b border-white/5 hover:bg-white/5">
                     <td className="px-3 py-3 font-medium text-white">{a.name}</td>
                     <td className="px-3 py-3 text-white/50 italic">Aucun groupe</td>
-                    <td className="px-3 py-3"></td>
+                    <td className="px-3 py-3" onClick={e => e.stopPropagation()}><div className="flex items-center justify-end gap-2"><button onClick={() => openEditGroup(a, [])} title="Modifier le groupe" className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white"><Pencil className="w-3.5 h-3.5" /></button><button onClick={() => setConfirmDelGroup(a)} title="Supprimer l'activité / Groupe" className="p-1.5 rounded hover:bg-red-500/20 text-white/50 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button></div></td>
                   </tr>));
                 } else {
                   grps.forEach((g: any, gi: number) => {
                     list.push((<tr key={`${a.id}-${g.id || gi}`} className="border-b border-white/5 hover:bg-white/5">
                       {gi === 0 && <td className="px-3 py-3 font-medium text-white" rowSpan={grps.length}>{a.name}</td>}
                       <td className="px-3 py-3 text-white/80">{g.name}</td>
-                      <td className="px-3 py-3"></td>
+                      <td className="px-3 py-3" onClick={e => e.stopPropagation()}><div className="flex items-center justify-end gap-2"><button onClick={() => openEditGroup(a, grps)} title="Modifier le groupe" className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white"><Pencil className="w-3.5 h-3.5" /></button><button onClick={() => setConfirmDelGroup(a)} title="Supprimer l'activité / Groupe" className="p-1.5 rounded hover:bg-red-500/20 text-white/50 hover:text-red-400"><Trash2 className="w-3.5 h-3.5" /></button></div></td>
                     </tr>));
                   });
                 }
@@ -316,6 +364,11 @@ const rowsHead = (hasNum: boolean) => (
                     <input type="time" value={s.start} onChange={e => updSlot(i, "start", e.target.value)} className="px-2 py-2 text-sm bg-white/5 border border-white/10 rounded text-white" />
                     <span className="text-white/40 text-sm">→</span>
                     <input type="time" value={s.end} onChange={e => updSlot(i, "end", e.target.value)} className="px-2 py-2 text-sm bg-white/5 border border-white/10 rounded text-white" />
+                    <select value={s.commissionType || "percent"} onChange={e => updSlot(i, "commissionType", e.target.value)} className="px-2 py-2 text-sm bg-white/5 border border-white/10 rounded text-white/60 focus:outline-none">
+                      <option value="percent">%</option>
+                      <option value="fixed_amount">DH</option>
+                    </select>
+                    <input type="number" value={s.commissionValue || ""} onChange={e => updSlot(i, "commissionValue", e.target.value)} placeholder="Comm." className="w-16 px-2 py-2 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40" />
                     {slots.length > 1 && <button onClick={() => delSlot(i)} className="p-1 rounded hover:bg-red-500/20 text-white/50 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>}
                   </div>
                 ))}
@@ -389,6 +442,45 @@ const rowsHead = (hasNum: boolean) => (
           <div className="flex justify-end gap-3">
             <button onClick={() => setConfirmDel(null)} className="px-4 py-2 text-sm rounded bg-white/5 text-white/70">Annuler</button>
             <button onClick={doDelete} className="px-4 py-2 text-sm rounded bg-red-600 text-white font-medium">Supprimer</button>
+          </div>
+        </ModalCard>
+      )}
+
+      {editGroup && (
+        <ModalCard title="Modifier l'activité / Groupe" onClose={() => setEditGroup(null)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-white/60 mb-1.5 uppercase tracking-wide">Nom du activité <span className="text-[#EA5800]">*</span></label>
+              <input value={gName} onChange={e => setGName(e.target.value)} placeholder="Ex: Sports collectifs, Gymnastique..." className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40 focus:outline-none focus:border-[#EA5800]" />
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs text-white/60 uppercase tracking-wide">Groupe</p>
+                <button onClick={addEditGroupRow} className="px-2 py-1 text-xs rounded text-white/70 hover:bg-white/10 inline-flex items-center gap-1"><Plus className="w-3 h-3" /> Ajouter</button>
+              </div>
+              <div className="border border-white/10 rounded overflow-hidden">
+                {editGroupList.map((g: any, i: number) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-2">
+                    <input value={g.name || ""} onChange={e => updEditGroupRow(i, e.target.value)} placeholder="Ex: Football U8, Baby Gym..." className="w-full px-3 py-2 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40 focus:outline-none focus:border-[#EA5800]" />
+                    {editGroupList.length > 1 && <button onClick={() => delEditGroupRow(i)} title="Retirer ce groupe" className="p-1 rounded hover:bg-red-500/20 text-white/50 hover:text-red-400"><X className="w-3.5 h-3.5" /></button>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 flex justify-end gap-3">
+            <button onClick={() => setEditGroup(null)} className="px-4 py-2 text-sm rounded bg-white/5 text-white/70">Annuler</button>
+            <button onClick={saveGroupEdit} className="px-4 py-2 text-sm rounded bg-[#EA5800] text-white font-medium inline-flex items-center gap-2"><Check className="w-4 h-4" /> Enregistrer</button>
+          </div>
+        </ModalCard>
+      )}
+
+      {confirmDelGroup && (
+        <ModalCard title="Confirmer la suppression" onClose={() => setConfirmDelGroup(null)}>
+          <p className="text-sm text-white/70 mb-4">Supprimer l'activité « {confirmDelGroup.name} » et tous ses groupes ? Cette action est définitive.</p>
+          <div className="flex justify-end gap-3">
+            <button onClick={() => setConfirmDelGroup(null)} className="px-4 py-2 text-sm rounded bg-white/5 text-white/70">Annuler</button>
+            <button onClick={doDeleteGroup} className="px-4 py-2 text-sm rounded bg-red-600 text-white font-medium">Supprimer</button>
           </div>
         </ModalCard>
       )}

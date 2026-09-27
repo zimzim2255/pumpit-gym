@@ -166,7 +166,7 @@ serve(async (req: Request) => {
       case "packs-create": {
         if (!body.name) return ok({ error: "Missing name" }, 400);
         const { data, error } = await supabase.from("family_packs").insert({
-          name: body.name, price: Number(body.price) || 0,
+          name: body.name, price: Number(body.price) || 0, photo: body.photo || "",
         }).select().single();
         if (error) throw error;
         if (Array.isArray(body.members)) {
@@ -182,7 +182,7 @@ serve(async (req: Request) => {
       }
       case "packs-update": {
         const { data, error } = await supabase.from("family_packs").update({
-          name: body.name, price: Number(body.price) || 0, status: body.status,
+          name: body.name, price: Number(body.price) || 0, status: body.status, photo: body.photo || "",
         }).eq("id", body.id).select().single();
         if (error) throw error;
         return ok({ pack: data });
@@ -235,12 +235,43 @@ serve(async (req: Request) => {
       case "insurance-add": {
         if (!body.memberId) return ok({ error: "Missing memberId" }, 400);
         const start = body.start || new Date().toISOString().slice(0, 10);
-        const end = new Date(new Date(start).getTime() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+        const end = body.end || new Date(new Date(start).getTime() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
         const { data, error } = await supabase.from("member_insurance").insert({
-          member_id: body.memberId, premium: Number(body.premium) || 0, start_date: start, end_date: end,
+          member_id: body.memberId, paid_amount: Number(body.paidAmount) || Number(body.premium) || 0,
+          start_date: start, end_date: end,
         }).select().single();
         if (error) throw error;
         return ok({ insurance: data });
+      }
+
+      // All insurances joined with member names (for the Assurance interface)
+      case "insurance-all": {
+        const { data, error } = await supabase.from("member_insurance")
+          .select("*")
+          .order("paid_at", { ascending: false });
+        if (error) throw error;
+        // member_insurance.member_id has no FK to members, so fetch names separately.
+        const ids = (data || []).map((row: any) => row.member_id).filter(Boolean);
+        const nameById = new Map<string, any>();
+        if (ids.length) {
+          const { data: members, error: me } = await supabase.from("members")
+            .select("id, name, phone").in("id", ids);
+          if (!me) (members || []).forEach((m: any) => nameById.set(m.id, m));
+        }
+        const flat = (data || []).map((row: any) => {
+          const m = nameById.get(row.member_id) || {};
+          return {
+            id: row.id,
+            memberId: row.member_id,
+            member: m.name || row.member_id,
+            phone: m.phone || "",
+            amount: Number(row.paid_amount || 0),
+            start: row.start_date,
+            end: row.end_date,
+            createdAt: row.created_at,
+          };
+        });
+        return ok({ insurance: flat });
       }
 
       // ── COURS ─────────────────────────────────────────────────
@@ -258,6 +289,8 @@ serve(async (req: Request) => {
           trainer_id: body.trainerId || null, name: body.name || "",
           day: body.day, start_time: body.startTime || "", end_time: body.endTime || "",
           room: body.room || "", capacity: Number(body.capacity) || 0,
+          commission_type: body.commissionType || "percent",
+          commission_value: Number(body.commissionValue) || 0,
         }).select().single();
         if (error) throw error;
         return ok({ cours: data });
@@ -267,6 +300,8 @@ serve(async (req: Request) => {
           activity_id: body.activityId, group_id: body.groupId, trainer_id: body.trainerId,
           name: body.name, day: body.day, start_time: body.startTime, end_time: body.endTime,
           room: body.room, capacity: Number(body.capacity), status: body.status,
+          commission_type: body.commissionType || "percent",
+          commission_value: Number(body.commissionValue) || 0,
         }).eq("id", body.id).select().single();
         if (error) throw error;
         return ok({ cours: data });

@@ -18,6 +18,8 @@ import SubscriptionAddCard from "./components/erp/SubscriptionAddCard";
 import ProgrammeManager from "./components/program/ProgrammeManager";
 import PacksPage from "./components/program/PacksPage";
 import CoachesPage from "./components/program/CoachesPage";
+import InsurancePage from "./components/program/InsurancePage";
+import AttendancePage from "./components/program/AttendancePage";
 import SubscriptionEditCard from "./components/erp/SubscriptionEditCard";
 import StockAddCard from "./components/erp/StockAddCard";
 import StockEditCard from "./components/erp/StockEditCard";
@@ -39,7 +41,7 @@ import ExpenseEditCard from "./components/erp/ExpenseEditCard";
 import MemberDetailCard from "./components/erp/MemberDetailCard";
 
 type ViewId =
-  | "dashboard" | "members" | "subscriptions" | "access" | "history" | "programme" | "packs" | "coaches"
+  | "dashboard" | "members" | "subscriptions" | "access" | "history" | "programme" | "packs" | "coaches" | "insurance" | "attendance"
   | "stock" | "sales" | "purchases" | "suppliers" | "staff" | "expenses" | "reports" | "settings" | "caisse" | "cheques" | "attendance" | "reminders";
 
 // ─── mock data ────────────────────────────────────────────────────────────────
@@ -703,7 +705,14 @@ type Subscription = {
   id: string; member: string; phone: string; type: string; start: string;
   end: string; price: number; paid: number; remaining: number;
   status: string; payment: string; observation: string;
+  remise?: number;
+  remiseType?: string;
   updated_by?: string;
+  memberIds?: string[];
+  activityIds?: string[];
+  groupIds?: string[];
+  coursIds?: string[];
+  pack_id?: string;
 };
 
 async function subApi(type: string, data?: any) {
@@ -732,6 +741,8 @@ function Subscriptions() {
     // new mix-project fields
     activity: "", group: "", cours: "", trainer: "",
     packId: "", insurance: false, insuranceShown: "",
+    remise: 0,
+    remiseType: "dh",
     mode: "nouvel", memberIds: [], packMemberIds: [], activityIds: [], groupIds: [], coursIds: [], packCourses: {}, commissions: {},
   });
   const [editForm, setEditForm] = useState(form);
@@ -781,7 +792,8 @@ function Subscriptions() {
     const selected = catalogue.find(t => t.name === type);
     const end = computeEndDate(current.start, type);
     const price = selected?.price ?? current.price;
-    const remaining = Math.max(0, price - current.paid);
+    const net = Math.max(0, price - (Number(current.remise) || 0));
+    const remaining = Math.max(0, net - current.paid);
     const status = remaining === 0 ? "Payé" : current.paid === 0 ? "Non payé" : "Paiement partiel";
     setter({ ...current, type, price, end, remaining, status });
   };
@@ -792,7 +804,8 @@ function Subscriptions() {
   };
 
   const updateSubscriptionPaid = (paid: number, current: typeof form, setter: typeof setForm) => {
-    const remaining = Math.max(0, current.price - paid);
+    const net = Math.max(0, (current.price || 0) - (Number(current.remise) || 0));
+    const remaining = Math.max(0, net - paid);
     const status = remaining === 0 ? "Payé" : paid === 0 ? "Non payé" : "Paiement partiel";
     setter({ ...current, paid, remaining, status });
   };
@@ -806,6 +819,8 @@ function Subscriptions() {
       memberId, subType: form.type,
       subStart: form.start, subEnd: form.end,
       price: form.price, paid: form.paid,
+      remise: form.remise || 0,
+      remiseType: form.remiseType || "dh",
       updated_by: subEmployeeName || undefined,
       // new mix-project fields
       packId: form.packId || undefined,
@@ -838,12 +853,31 @@ function Subscriptions() {
       payment: "Espèces", observation: "",
       activity: "", group: "", cours: "", trainer: "",
       packId: "", insurance: false, insuranceShown: "",
+      remise: 0,
+      remiseType: "dh",
       mode: "nouvel", memberIds: [], packMemberIds: [], activityIds: [], groupIds: [], coursIds: [], packCourses: {}, commissions: {} });
     setShowAdd(false);
   };
 
   const openEditSubscription = (subscription: Subscription) => {
-    setEditForm(subscription);
+    setEditForm({
+      ...subscription,
+      memberIds: subscription.memberIds || [],
+      activityIds: subscription.activityIds || [],
+      groupIds: subscription.groupIds || [],
+      coursIds: subscription.coursIds || [],
+      packMemberIds: (subscription as any).packMemberIds || [],
+      packCourses: (subscription as any).packCourses || {},
+      insurance: false, insuranceShown: "",
+      member: subscription.member || "",
+      activity: (subscription as any).activity || "",
+      group: (subscription as any).group || "",
+      cours: (subscription as any).cours || "",
+      trainer: (subscription as any).trainer || "",
+      mode: (subscription as any).sub_mode || "nouvel",
+      remiseType: (subscription as any).remiseType || "dh",
+      packId: (subscription as any).pack_id || "",
+    });
     setShowEdit(true);
   };
 
@@ -852,6 +886,8 @@ function Subscriptions() {
       id: editForm.id, sub_type: editForm.type,
       sub_start: editForm.start, sub_end: editForm.end,
       price: editForm.price, paid: editForm.paid,
+      remise: editForm.remise || 0,
+      remiseType: editForm.remiseType || "dh",
       updated_by: subEmployeeName || undefined,
     });
     if (result?.success) {
@@ -2430,6 +2466,8 @@ const NAV: NavItem[] = [
   { id: "programme", label: "Programme & Encadrement", Icon: Activity, group: "Gestion" },
   { id: "packs", label: "Packs & Tarifs", Icon: Package, group: "Gestion" },
   { id: "coaches", label: "Entraîneurs", Icon: Users, group: "Gestion" },
+  { id: "insurance", label: "Assurance", Icon: Shield, group: "Gestion" },
+  { id: "attendance", label: "Suivi présence", Icon: Fingerprint, group: "Gestion" },
   { id: "subscriptions", label: "Abonnements", Icon: CreditCard, group: "Gestion" },
   { id: "access", label: "Contrôle d'accès", Icon: Shield, group: "Accès" },
   { id: "history", label: "Historique accès", Icon: Clock, group: "Accès" },
@@ -2568,6 +2606,8 @@ export default function App() {
       case "programme": return <div className="p-6 space-y-5"><PageHeader title="Programme & Encadrement" /><ProgrammeManager /></div>;
       case "packs": return <PacksPage />;
       case "coaches": return <CoachesPage />;
+      case "insurance": return <InsurancePage />;
+      case "attendance": return <AttendancePage />;
       case "settings": return <SettingsView />;
       default: return <Dashboard />;
     }

@@ -5,7 +5,7 @@ import { InputField, SelectField, FormActions } from "../ui/FormField";
 import ChequeSelector from "../door/ChequeSelector";
 import ChequeAddCard from "../door/ChequeAddCard";
 import { SubType } from "../../services/subscriptionService";
-import { loadAll } from "../../services/programService";
+import { loadAll, getAllInsurance } from "../../services/programService";
 import PackCreator from "./PackCreator";
 type SubscriptionForm = {
   id: string; member: string; phone: string; type: string; start: string;
@@ -13,6 +13,8 @@ type SubscriptionForm = {
   status: string; payment: string; observation: string;
   activity: string; group: string; cours: string; trainer: string;
   packId: string; insurance: boolean; insuranceShown: string;
+  remise: number;
+  remiseType: string;
   mode: string; memberIds: string[]; packMemberIds: string[]; activityIds: string[]; groupIds: string[]; coursIds: string[];
   packCourses: Record<string, { activityIds: string[]; groupIds: string[]; coursIds: string[] }>;
   commissions: Record<string, { percent: number; amount: number }>;
@@ -39,6 +41,7 @@ function addYearStr(): string { const d = new Date(); d.setFullYear(d.getFullYea
 }
 export default function SubscriptionAddCard({ form, setForm, onClose, onSave, members, subTypes, updateType, updateStart, updatePaid, onMemberChange, onChequeSelect, chequeId, chequeForm, setChequeForm, showChequeAdd, onOpenChequeAdd, onCloseChequeAdd, onSaveCheque, chequeMembers }: SubscriptionAddCardProps) {
   const [prog, setProg] = useState<Prog>(loadProg);
+  const [insByName, setInsByName] = useState<Record<string, number>>({});
   useEffect(() => {
     loadAll().then(db => {
       setProg(db);
@@ -56,6 +59,13 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
         localStorage.setItem("gym_programme_data", JSON.stringify(merged));
       } catch { /* keep current prog */ }
     }).catch(() => {});
+    getAllInsurance().then(r => {
+      const map: Record<string, number> = {};
+      (r?.insurance || []).forEach((row: any) => {
+        if (row?.member) map[row.member] = Number(row.amount) || 300;
+      });
+      setInsByName(map);
+    }).catch(() => {});
   }, []);
   const activities = prog.activities as any[];
   const groups = prog.groups as any[];
@@ -72,8 +82,20 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
   const pack = packs.find(p => p.id === packId);
   const insStore = loadInsurance();
   const selectedPersons = memberIds.concat(packMemberIds).filter((v, i, a) => a.indexOf(v) === i);
-  const assurance = selectedPersons.reduce((sum, name) => sum + (Number(insStore[name]?.premium) || 300), 0);
-  const total = (form.price || 0) + assurance;
+  // Insurance premium: prefer the DB amount from the Assurance page, then the
+  // legacy localStorage map, then the 300 DH default.
+  const assurance = selectedPersons.reduce((sum, name) => {
+    const dbVal = Number(insByName[name] || 0);
+    const localVal = Number((insStore as any)[name]?.premium || 0);
+    return sum + (dbVal || localVal || 300);
+  }, 0);
+  // Remise applies only to the base price (NOT the insurance).
+  const priceBase = form.price || 0;
+  const remiseRaw = Math.max(0, Number(form.remise) || 0);
+  const remise = (form.remiseType || "dh") === "percent"
+    ? Math.min(priceBase, (priceBase * remiseRaw) / 100)
+    : Math.min(priceBase, remiseRaw);
+  const total = priceBase - remise + assurance;
   const [sMember, setSMember] = useState("");
   const [sAct, setSAct] = useState("");
   const [sGrp, setSGrp] = useState("");
@@ -110,7 +132,22 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
   const toggleCr = (id: string) => {
     const next = crsIds.includes(id) ? crsIds.filter(x => x !== id) : [...crsIds, id];
     const coaches = next.map(cid => coachName(cours.find(c => c.id === cid)?.trainer_id || "")).filter(n => n && n !== "---");
-    bubble({ coursIds: next, cours: next.map(crName).join(", "), trainer: [...new Set(coaches)].join(", ") });
+    // The coach commission is now defined on the cours (Créer une Activité):
+    // prefill it here instead of asking for it per abonnement.
+    let newCom = { ...(form.commissions || {}) };
+    if (!crsIds.includes(id)) {
+      const c = cours.find(c => c.id === id);
+      if (c) {
+        const isFixed = (c.commission_type || "percent") === "fixed_amount";
+        newCom[id] = isFixed
+          ? { percent: 0, amount: Number(c.commission_value || 0) }
+          : { percent: Number(c.commission_value || 0), amount: 0 };
+      }
+    } else {
+      // deselecting removes its commission
+      delete newCom[id];
+    }
+    bubble({ coursIds: next, cours: next.map(crName).join(", "), trainer: [...new Set(coaches)].join(", "), commissions: newCom });
   };
   const filteredActs = activities.filter(a => !sAct || a.name.toLowerCase().includes(sAct.toLowerCase()));
   const selGroups = groups.filter(g => actIds.includes(g.activity_id || ""));
@@ -118,15 +155,6 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
   const selCours = cours.filter(c => (c.group_id && grpIds.includes(c.group_id)) || (c.activity_id && actIds.includes(c.activity_id)));
   const filteredCrs = selCours.filter(c => !sCr || (c.name || c.day || "").toLowerCase().includes(sCr.toLowerCase()));
   const coachName = (id: string) => trainers.find(t => t.id === id)?.name || "---";
-  const commissions = (form.commissions || {}) as Record<string, { percent: number; amount: number }>;
-  const setCommission = (coursId: string, patch: { percent?: number; amount?: number }) => bubble({ commissions: { ...commissions, [coursId]: { ...(commissions[coursId] || { percent: 0, amount: 0 }), ...patch } } });
-  const commissionInput = (coursId: string, c: any) => (
-    <div className="px-2 pt-0.5 flex gap-1.5">
-      <input type="number" value={(commissions[coursId]?.percent) || ""} onChange={e => setCommission(coursId, { percent: Number(e.target.value) })} placeholder="%" className="w-12 py-0.5 text-[10px] bg-white/5 border border-white/10 rounded text-white placeholder-white/30" />
-      <input type="number" value={(commissions[coursId]?.amount) || ""} onChange={e => setCommission(coursId, { amount: Number(e.target.value) })} placeholder="DH" className="w-14 py-0.5 text-[10px] bg-white/5 border border-white/10 rounded text-white placeholder-white/30" />
-      <span className="text-[9px] text-white/40">comm.</span>
-    </div>
-  );
   const actCount = (id: string) => cours.filter(c => c.activity_id === id).length;
   const grpCount = (id: string) => cours.filter(c => c.group_id === id).length;
   const checkbox = (checked: boolean, onToggle: () => void, label: string, count: string, k?: string) => (
@@ -165,8 +193,7 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
               {pcC.length === 0 ? <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucun</p> : pcC.map(c => (
                 <div key={c.id}>
                   {checkbox(pc.coursIds.includes(c.id), () => togglePackCr(name, c.id), crName(c.id), "")}
-                  {pc.coursIds.includes(c.id) && <div className="px-2 text-[10px] text-white/50">Coach: {coachName(c.trainer_id)}</div>}
-                  {pc.coursIds.includes(c.id) && commissionInput(c.id, c)}
+                  {pc.coursIds.includes(c.id) && <div className="px-2 text-[10px] text-white/50">Coach: {coachName(c.trainer_id)} — Comm: {c.commission_type === "fixed_amount" ? `${c.commission_value || 0} DH` : `${c.commission_value || 0}%`}</div>}
                 </div>
               ))}
             </div>
@@ -254,8 +281,7 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
                   {filteredCrs.length === 0 ? <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucun</p> : filteredCrs.map(c => (
                     <div key={c.id}>
                       {checkbox(crsIds.includes(c.id), () => toggleCr(c.id), crName(c.id), "")}
-                      {crsIds.includes(c.id) && <div className="px-2 text-[10px] text-white/50">Coach: {coachName(c.trainer_id)}</div>}
-                      {crsIds.includes(c.id) && commissionInput(c.id, c)}
+                      {crsIds.includes(c.id) && <div className="px-2 text-[10px] text-white/50">Coach: {coachName(c.trainer_id)} — Comm: {c.commission_type === "fixed_amount" ? `${c.commission_value || 0} DH` : `${c.commission_value || 0}%`}</div>}
                     </div>
                   ))}
                 </div></>
@@ -272,8 +298,29 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
               <div className="px-2 py-1.5 text-sm rounded bg-white/5 text-white/70">{form.price || 0}</div>
             </div>
             <div>
+              <label className="block text-[11px] text-white/60 mb-1">Remise</label>
+              <div className="flex gap-1.5">
+                <input type="number" min={0} value={form.remise === undefined ? "" : form.remise} onChange={e => setForm({ ...form, remise: Number(e.target.value) || 0 })} placeholder="0" className="w-full min-w-0 px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40" />
+                <select value={form.remiseType || "dh"} onChange={e => setForm({ ...form, remiseType: e.target.value })} className="px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white/70 shrink-0">
+                  <option value="dh">DH</option>
+                  <option value="percent">%</option>
+                </select>
+              </div>
+              <p className="text-[10px] text-white/40 -mt-0.5">S'applique au prix, pas à l'assurance</p>
+            </div>
+            <div>
               <label className="block text-[11px] text-white/60 mb-1">Assurance (Dhs)</label>
               <input type="number" value={assurance} onChange={() => {}} disabled className="w-full px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white/60 disabled:opacity-60" />
+            </div>
+          </div>
+          <div className="mt-2">
+            <div className="flex justify-between text-[11px] text-white/50">
+              <span>Sous-total (prix − remise)</span>
+              <span className="font-mono">{(form.price || 0) - remise} Dhs</span>
+            </div>
+            <div className="flex justify-between text-[11px] text-white/50 mt-1">
+              <span>+ Assurance</span>
+              <span className="font-mono">{assurance} Dhs</span>
             </div>
           </div>
           {selectedPersons.length === 0 ? (

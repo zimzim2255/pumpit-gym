@@ -49,7 +49,13 @@ serve(async (req: Request) => {
         const subId = `AB${Date.now().toString(36).toUpperCase()}`;
         const price = body.price || 0;
         const paid = body.paid || 0;
-        const remaining = Math.max(0, price - paid);
+        const remiseRaw = Number(body.remise) || 0;
+        const remiseType = body.remiseType || "dh";
+        const remise = remiseType === "percent"
+          ? Math.min(price, (price * remiseRaw) / 100)
+          : Math.min(price, remiseRaw);
+        const netPrice = Math.max(0, price - remise);
+        const remaining = Math.max(0, netPrice - paid);
         const subStatus = remaining === 0 ? "Payé" : paid === 0 ? "Non payé" : "Paiement partiel";
 
         // Family pack support: subscription can cover a pack (multi-member).
@@ -74,7 +80,7 @@ serve(async (req: Request) => {
         const { data: sub, error } = await supabase.from("subscriptions").insert({
           id: subId, member_id: memberId, sub_type: subType,
           sub_start: subStart, sub_end: subEnd,
-          price, paid, remaining, sub_status: subStatus,
+          price, paid, remaining, sub_status: subStatus, remise, remise_type: remiseType,
           pack_id: packId,
           sub_mode: body.mode || "nouvel",
           // programme / encadrement
@@ -169,47 +175,66 @@ serve(async (req: Request) => {
       }
 
       case "list": {
-        // Get all subscriptions joined with member names
+        // Get all subscriptions joined with member names + covered members + courses
         const { data: subscriptions, error } = await supabase
           .from("subscriptions")
-          .select(`*, members(name, phone)`)
+          .select(`*, members(name, phone),
+            subscription_members(member_name),
+            subscription_member_courses(activity_id, group_id, cours_id)`)
           .order("created_at", { ascending: false });
         if (error) throw error;
 
         // Flatten to match frontend format
-        const flat = (subscriptions || []).map((s: any) => ({
-          id: s.id,
-          member: s.members?.name || s.member_id,
-          phone: s.members?.phone || "",
-          type: s.sub_type,
-          start: s.sub_start,
-          end: s.sub_end,
-          price: s.price,
-          paid: s.paid,
-          remaining: s.remaining,
-          status: s.sub_status,
-          payment: "—",
-          observation: "",
-          activity: s.activity ?? null,
-          group: s.training_group ?? null,
-          cours: s.course_name ?? null,
-          trainer: s.trainer ?? null,
-          sub_mode: s.sub_mode ?? null,
-          pack_id: s.pack_id ?? null,
-          commissions: s.commissions ?? {},
-          member_ids: s.member_ids ?? [],
-        }));
+        const flat = (subscriptions || []).map((s: any) => {
+          const covered = (s.subscription_members || []).map((m: any) => m.member_name).filter(Boolean);
+          const actIds = (s.subscription_member_courses || []).map((c: any) => c.activity_id).filter(Boolean);
+          const grpIds = (s.subscription_member_courses || []).map((c: any) => c.group_id).filter(Boolean);
+          const crsIds = (s.subscription_member_courses || []).map((c: any) => c.cours_id).filter(Boolean);
+          return {
+            id: s.id,
+            member: s.members?.name || s.member_id,
+            phone: s.members?.phone || "",
+            type: s.sub_type,
+            start: s.sub_start,
+            end: s.sub_end,
+            price: s.price,
+            paid: s.paid,
+            remaining: s.remaining,
+            remise: s.remise || 0,
+            remiseType: s.remise_type || "dh",
+            status: s.sub_status,
+            payment: "—",
+            observation: "",
+            activity: s.activity ?? null,
+            group: s.training_group ?? null,
+            cours: s.course_name ?? null,
+            trainer: s.trainer ?? null,
+            sub_mode: s.sub_mode ?? null,
+            pack_id: s.pack_id ?? null,
+            commissions: s.commissions ?? {},
+            memberIds: covered,
+            activityIds: [...new Set(actIds)],
+            groupIds: [...new Set(grpIds)],
+            coursIds: [...new Set(crsIds)],
+          };
+        });
 
         return new Response(JSON.stringify({ subscriptions: flat }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       case "update": {
         const { id, sub_type, sub_start, sub_end, price, paid } = body;
-        const remaining = Math.max(0, (price || 0) - (paid || 0));
+        const remiseRaw = Number(body.remise) || 0;
+        const remiseType = body.remiseType || "dh";
+        const remise = remiseType === "percent"
+          ? Math.min(price || 0, ((price || 0) * remiseRaw) / 100)
+          : Math.min(price || 0, remiseRaw);
+        const netPrice = Math.max(0, (price || 0) - remise);
+        const remaining = Math.max(0, netPrice - (paid || 0));
         const sub_status = remaining === 0 ? "Payé" : (paid || 0) === 0 ? "Non payé" : "Paiement partiel";
 
         const { data, error } = await supabase.from("subscriptions").update({
-          sub_type, sub_start, sub_end, price, paid, remaining, sub_status,
+          sub_type, sub_start, sub_end, price, paid, remaining, sub_status, remise, remise_type: remiseType,
         }).eq("id", id).select().single();
 
         if (error) throw error;

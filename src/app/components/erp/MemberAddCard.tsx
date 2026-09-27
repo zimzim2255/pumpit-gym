@@ -1,4 +1,4 @@
-import { Plus, User, Phone, Mail, CreditCard, Calendar, MapPin, Upload, UserRound, Image, DollarSign } from "lucide-react";
+import { Plus, User, Phone, Mail, CreditCard, Calendar, MapPin, Upload, UserRound, Image } from "lucide-react";
 import { Dispatch, SetStateAction, useState } from "react";
 import ModalCard from "../ui/ModalCard";
 import { InputField, SelectField, FormActions } from "../ui/FormField";
@@ -61,10 +61,6 @@ export default function MemberAddCard({ form, setForm, onClose, onSave }: Member
     try {
       const name = (form.name || "").trim();
       if (name) {
-        const ins = JSON.parse(localStorage.getItem("gym_insurance") || "{}");
-        const end = new Date(); end.setFullYear(end.getFullYear() + 1);
-        ins[name] = { premium: Number(form.insurance === undefined ? 300 : form.insurance), end: `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}` };
-        localStorage.setItem("gym_insurance", JSON.stringify(ins));
         const ms = JSON.parse(localStorage.getItem("gym_members") || "[]");
         if (!ms.includes(name)) { ms.push(name); localStorage.setItem("gym_members", JSON.stringify(ms)); }
       }
@@ -113,12 +109,6 @@ export default function MemberAddCard({ form, setForm, onClose, onSave }: Member
             <InputField label="Contact urgence" icon={Phone} value={form.emergencyContact} onChange={v => setForm({ ...form, emergencyContact: v as string })} placeholder="Ex: Fatima Benali" />
             <InputField label="Téléphone urgence" icon={Phone} value={form.emergencyPhone} onChange={v => setForm({ ...form, emergencyPhone: v as string })} placeholder="Ex: 0661 234 567" />
           </div>
-        </div>
-
-        <div>
-          <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4">Assurance</h3>
-          <InputField label="Assurance (DH / an)" icon={DollarSign} type="number" value={form.insurance === undefined ? 300 : form.insurance} onChange={v => setForm({ ...form, insurance: Number(v) })} placeholder="300" />
-          <p className="text-xs text-[#EA5800]/70 mt-1">Assurance annuelle de cet adhérent (défaut 300 DH, modifiable). Appliquée automatiquement lors d'un abonnement.</p>
         </div>
 
         <div>

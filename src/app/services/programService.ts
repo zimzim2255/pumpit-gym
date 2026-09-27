@@ -81,3 +81,21 @@ export const deleteCours = (id: string) => call("cours-delete", { id });
 export const createPack = (p: any) => call("packs-create", p);
 export const updatePack = (p: any) => call("packs-update", p);
 export const deletePack = (id: string) => call("packs-delete", { id });
+
+// ── INSURANCE ─────────────────────────────────────────────────────────────
+export const getAllInsurance = () => call("insurance-all");
+
+export const addInsurance = (payload: any) => call("insurance-add", payload);
+
+// ── ATTENDANCE / COMMISSION PER TRAINER DAY ────────────────────────────────
+const ATTENDANCE_URL = import.meta.env.VITE_SUPABASE_URL + "/functions/v1/attendance-manager";
+export async function getAttendance(payload: any = {}): Promise<any> {
+  const res = await fetch(ATTENDANCE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+    body: JSON.stringify({ type: "attendance-list", ...payload }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error || "attendance failed");
+  return data;
+}
