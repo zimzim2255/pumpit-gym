@@ -5,12 +5,13 @@ interface ModalCardProps {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  wide?: boolean;
 }
 
-export default function ModalCard({ title, onClose, children }: ModalCardProps) {
+export default function ModalCard({ title, onClose, children, wide }: ModalCardProps) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-3xl bg-card border border-white/10 rounded-3xl shadow-2xl overflow-hidden">
+      <div className={`w-full ${wide ? "max-w-6xl" : "max-w-3xl"} bg-card border border-white/10 rounded-3xl shadow-2xl overflow-hidden`}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/5">
           <h2 className="text-lg font-semibold text-white">{title}</h2>
           <button onClick={onClose} className="text-white/40 hover:text-white transition-colors">

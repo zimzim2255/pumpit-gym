@@ -15,6 +15,9 @@ import {
 import MemberAddCard from "./components/erp/MemberAddCard";
 import MemberEditCard from "./components/erp/MemberEditCard";
 import SubscriptionAddCard from "./components/erp/SubscriptionAddCard";
+import ProgrammeManager from "./components/program/ProgrammeManager";
+import PacksPage from "./components/program/PacksPage";
+import CoachesPage from "./components/program/CoachesPage";
 import SubscriptionEditCard from "./components/erp/SubscriptionEditCard";
 import StockAddCard from "./components/erp/StockAddCard";
 import StockEditCard from "./components/erp/StockEditCard";
@@ -36,7 +39,7 @@ import ExpenseEditCard from "./components/erp/ExpenseEditCard";
 import MemberDetailCard from "./components/erp/MemberDetailCard";
 
 type ViewId =
-  | "dashboard" | "members" | "subscriptions" | "access" | "history"
+  | "dashboard" | "members" | "subscriptions" | "access" | "history" | "programme" | "packs" | "coaches"
   | "stock" | "sales" | "purchases" | "suppliers" | "staff" | "expenses" | "reports" | "settings" | "caisse" | "cheques" | "attendance" | "reminders";
 
 // ─── mock data ────────────────────────────────────────────────────────────────
@@ -726,6 +729,10 @@ function Subscriptions() {
     start: today, end: computeEndDate(today, "Mensuel"),
     price: 200, paid: 0, remaining: 200, status: "Non payé",
     payment: "Espèces", observation: "",
+    // new mix-project fields
+    activity: "", group: "", cours: "", trainer: "",
+    packId: "", insurance: false, insuranceShown: "",
+    mode: "nouvel", memberIds: [], packMemberIds: [], activityIds: [], groupIds: [], coursIds: [], packCourses: {}, commissions: {},
   });
   const [editForm, setEditForm] = useState(form);
   // Cheque state
@@ -800,6 +807,21 @@ function Subscriptions() {
       subStart: form.start, subEnd: form.end,
       price: form.price, paid: form.paid,
       updated_by: subEmployeeName || undefined,
+      // new mix-project fields
+      packId: form.packId || undefined,
+      activity: form.activity || undefined,
+      group: form.group || undefined,
+      cours: form.cours || undefined,
+      trainer: form.trainer || undefined,
+      insurance: !!form.insurance,
+      mode: form.mode || "nouvel",
+      memberIds: form.memberIds || [],
+      packMemberIds: form.packMemberIds || [],
+      activityIds: form.activityIds || [],
+      groupIds: form.groupIds || [],
+      coursIds: form.coursIds || [],
+      packCourses: form.packCourses || {},
+      commissions: form.commissions || {},
     });
     if (result?.subscription) {
       const s = result.subscription;
@@ -813,7 +835,10 @@ function Subscriptions() {
     setForm({ id: "", member: "", phone: "", type: "Mensuel",
       start: new Date().toLocaleDateString("fr-FR"), end: "",
       price: 200, paid: 0, remaining: 200, status: "Non payé",
-      payment: "Espèces", observation: "" });
+      payment: "Espèces", observation: "",
+      activity: "", group: "", cours: "", trainer: "",
+      packId: "", insurance: false, insuranceShown: "",
+      mode: "nouvel", memberIds: [], packMemberIds: [], activityIds: [], groupIds: [], coursIds: [], packCourses: {}, commissions: {} });
     setShowAdd(false);
   };
 
@@ -2402,6 +2427,9 @@ type NavItem = { id: ViewId; label: string; Icon: React.ElementType; group?: str
 const NAV: NavItem[] = [
   { id: "dashboard", label: "Tableau de bord", Icon: LayoutDashboard },
   { id: "members", label: "Adhérents", Icon: Users, group: "Gestion" },
+  { id: "programme", label: "Programme & Encadrement", Icon: Activity, group: "Gestion" },
+  { id: "packs", label: "Packs & Tarifs", Icon: Package, group: "Gestion" },
+  { id: "coaches", label: "Entraîneurs", Icon: Users, group: "Gestion" },
   { id: "subscriptions", label: "Abonnements", Icon: CreditCard, group: "Gestion" },
   { id: "access", label: "Contrôle d'accès", Icon: Shield, group: "Accès" },
   { id: "history", label: "Historique accès", Icon: Clock, group: "Accès" },
@@ -2537,6 +2565,9 @@ export default function App() {
       case "cheques": return <ChequePanel />;
       case "expenses": return <Expenses />;
       case "reports": return <Reports />;
+      case "programme": return <div className="p-6 space-y-5"><PageHeader title="Programme & Encadrement" /><ProgrammeManager /></div>;
+      case "packs": return <PacksPage />;
+      case "coaches": return <CoachesPage />;
       case "settings": return <SettingsView />;
       default: return <Dashboard />;
     }

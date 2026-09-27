@@ -62,10 +62,11 @@ serve(async (req: Request) => {
   }
 
   try {
+    // Normal single members (existing behaviour)
     const { data: members } = await supabase.from("members").select("id, status");
     const { data: subs } = await supabase
       .from("subscriptions")
-      .select("member_id, sub_start, sub_end, sub_status");
+      .select("member_id, sub_start, sub_end, sub_status, pack_id");
 
     const memberStatus = new Map<string, string>();
     for (const m of members || []) memberStatus.set(m.id, m.status);
@@ -73,14 +74,37 @@ serve(async (req: Request) => {
     // latest subscription per member (by sub_end desc)
     const latestSub = new Map<string, any>();
     for (const s of subs || []) {
+      if (!s.member_id) continue;
       const cur = latestSub.get(s.member_id);
       if (!cur || cmpFrDate(s.sub_end, cur.sub_end) > 0) latestSub.set(s.member_id, s);
     }
 
+    // Family packs: active pack subscriptions -> every pack member (by zkteco_id)
     const today = new Date();
     const todayNorm = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const packIds = new Set<string>();
+    for (const s of subs || []) {
+      if (!s.pack_id) continue;
+      if (s.sub_status === "Non payé") continue;
+      const startDate = parseFrDate(s.sub_start);
+      const endDate = parseFrDate(s.sub_end);
+      if (!startDate || !endDate) continue;
+      if (todayNorm >= startDate && todayNorm <= endDate) packIds.add(s.pack_id);
+    }
+
+    let packMembers: Array<{ zkteco_id: string }> = [];
+    if (packIds.size > 0) {
+      const { data: pm } = await supabase
+        .from("family_pack_members")
+        .select("zkteco_id")
+        .in("pack_id", Array.from(packIds))
+        .not("zkteco_id", "is", null);
+      packMembers = pm || [];
+    }
 
     const allowed: Array<{ userId: string; subEnd: string }> = [];
+    const used = new Set<string>();
+
     for (const [memberId, sub] of latestSub) {
       if (memberStatus.get(memberId) !== "Actif") continue;
       if (sub.sub_status === "Non payé") continue;
@@ -89,6 +113,14 @@ serve(async (req: Request) => {
       if (!startDate || !endDate) continue;
       if (todayNorm < startDate || todayNorm > endDate) continue;
       allowed.push({ userId: memberId, subEnd: sub.sub_end });
+      used.add(memberId);
+    }
+
+    // Add every pack member
+    for (const p of packMembers) {
+      if (!p.zkteco_id || used.has(p.zkteco_id)) continue;
+      allowed.push({ userId: p.zkteco_id, subEnd: "" });
+      used.add(p.zkteco_id);
     }
 
     return new Response(JSON.stringify({ allowed, count: allowed.length }), {

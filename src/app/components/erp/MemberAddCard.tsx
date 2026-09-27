@@ -1,4 +1,4 @@
-import { Plus, User, Phone, Mail, CreditCard, Calendar, MapPin, Upload, UserRound, Image } from "lucide-react";
+import { Plus, User, Phone, Mail, CreditCard, Calendar, MapPin, Upload, UserRound, Image, DollarSign } from "lucide-react";
 import { Dispatch, SetStateAction, useState } from "react";
 import ModalCard from "../ui/ModalCard";
 import { InputField, SelectField, FormActions } from "../ui/FormField";
@@ -8,6 +8,7 @@ type MemberForm = {
   id: string; name: string; phone: string; cin: string; gender: string;
   dob: string; joined: string; status: string; email: string; address: string;
   emergencyContact: string; emergencyPhone: string; photo: string;
+  insurance?: number;
 };
 
 interface MemberAddCardProps {
@@ -56,6 +57,21 @@ export default function MemberAddCard({ form, setForm, onClose, onSave }: Member
     }
   };
 
+  const saveMember = () => {
+    try {
+      const name = (form.name || "").trim();
+      if (name) {
+        const ins = JSON.parse(localStorage.getItem("gym_insurance") || "{}");
+        const end = new Date(); end.setFullYear(end.getFullYear() + 1);
+        ins[name] = { premium: Number(form.insurance === undefined ? 300 : form.insurance), end: `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}` };
+        localStorage.setItem("gym_insurance", JSON.stringify(ins));
+        const ms = JSON.parse(localStorage.getItem("gym_members") || "[]");
+        if (!ms.includes(name)) { ms.push(name); localStorage.setItem("gym_members", JSON.stringify(ms)); }
+      }
+    } catch {}
+    onSave();
+  };
+
   return (
     <ModalCard title="" onClose={onClose}>
       <div className="flex items-center gap-4 mb-6">
@@ -100,6 +116,12 @@ export default function MemberAddCard({ form, setForm, onClose, onSave }: Member
         </div>
 
         <div>
+          <h3 className="text-sm font-semibold text-white uppercase tracking-wider mb-4">Assurance</h3>
+          <InputField label="Assurance (DH / an)" icon={DollarSign} type="number" value={form.insurance === undefined ? 300 : form.insurance} onChange={v => setForm({ ...form, insurance: Number(v) })} placeholder="300" />
+          <p className="text-xs text-[#EA5800]/70 mt-1">Assurance annuelle de cet adhérent (défaut 300 DH, modifiable). Appliquée automatiquement lors d'un abonnement.</p>
+        </div>
+
+        <div>
           <div className="flex items-center gap-2 mb-4">
             <Image className="w-4 h-4 text-[#EA5800]" />
             <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Photo de profil (optionnelle)</h3>
@@ -139,7 +161,7 @@ export default function MemberAddCard({ form, setForm, onClose, onSave }: Member
         </div>
       </div>
 
-      <FormActions onCancel={onClose} onSave={onSave} saving={uploading} />
+      <FormActions onCancel={onClose} onSave={saveMember} saving={uploading} />
     </ModalCard>
   );
 }

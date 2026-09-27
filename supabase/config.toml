@@ -1,0 +1,15 @@
+# Supabase CLI project config
+# Deploy target used by the tools / door flow.
+project_id = "lbbwmwyfthvdnwofqakp"
+
+# The door webhook is called by the GymDoorConnector with a shared Bearer
+# secret (ZKTECO_WEBHOOK_SECRET), NOT with a Supabase JWT. So JWT verification
+# must be off, otherwise the gateway rejects every scan before the function runs.
+[functions.zkteco-webhook]
+verify_jwt = false
+
+# allowed-members is also called by the connector with the shared Bearer secret
+# (or the anon publishable key from the dashboard). To let it run with a plain
+# Bearer secret, disable JWT verification exactly like the webhook.
+[functions.allowed-members]
+verify_jwt = false

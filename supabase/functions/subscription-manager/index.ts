@@ -31,9 +31,19 @@ serve(async (req: Request) => {
 
     switch (body.type) {
       case "create": {
-        if (!body.subType || !body.subStart || !body.subEnd) {
-          return new Response(JSON.stringify({ error: "Missing required fields" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        // Tolerant: never reject a real submission over trivial field gaps.
+        // Derive subEnd from subType when missing; default type to "Mensuel".
+        const subTypeNorm = (body.subType || "Mensuel") as string;
+        const subStartNorm = (body.subStart || new Date().toLocaleDateString("fr-FR")) as string;
+        let subEndNorm = (body.subEnd || "") as string;
+        if (!subEndNorm) {
+          const monthsMap = { "Journalier": 0, "Mensuel": 1, "Bimestriel": 2, "Trimestriel": 3, "Semestriel": 6, "Annuel": 12 };
+          const [d, m, y] = subStartNorm.split("/").map(Number);
+          const dt = new Date(y, (m || 1) - 1, d || 1);
+          dt.setMonth(dt.getMonth() + (monthsMap[subTypeNorm] || 1));
+          subEndNorm = dt.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
         }
+        const subType = subTypeNorm, subStart = subStartNorm, subEnd = subEndNorm;
 
         const memberId = body.memberId || `ADH${Date.now().toString(36).toUpperCase()}`;
         const subId = `AB${Date.now().toString(36).toUpperCase()}`;
@@ -42,13 +52,106 @@ serve(async (req: Request) => {
         const remaining = Math.max(0, price - paid);
         const subStatus = remaining === 0 ? "Payé" : paid === 0 ? "Non payé" : "Paiement partiel";
 
+        // Family pack support: subscription can cover a pack (multi-member).
+        const packId = body.packId || body.pack_id || null;
+
+        // Insurance rule: NEW member = 1 year, paid ONCE. On renewal, skip if the
+        // member still has a valid insurance (end_date >= today).
+        let insuranceSkipped = false;
+        let insuranceAdded = false;
+        const { data: insuredRes, error: insuredErr } = await supabase
+          .rpc("member_insured", { p_member: memberId });
+        if (insuredErr) throw insuredErr;
+        if (insuredRes === true) {
+          insuranceSkipped = true;
+        } else if (body.insurance || body.withInsurance) {
+          const { error: insErr } = await supabase
+            .rpc("add_member_insurance", { p_member: memberId, p_amount: Number(body.insuranceAmount) || 0 });
+          if (insErr) throw insErr;
+          insuranceAdded = true;
+        }
+
         const { data: sub, error } = await supabase.from("subscriptions").insert({
-          id: subId, member_id: memberId, sub_type: body.subType,
-          sub_start: body.subStart, sub_end: body.subEnd,
+          id: subId, member_id: memberId, sub_type: subType,
+          sub_start: subStart, sub_end: subEnd,
           price, paid, remaining, sub_status: subStatus,
+          pack_id: packId,
+          sub_mode: body.mode || "nouvel",
+          // programme / encadrement
+          activity: body.activity || null,
+          training_group: body.group || null,
+          trainer: body.trainer || null,
+          course_name: body.cours || null,
+          commissions: body.commissions || {},
         }).select().single();
 
         if (error) throw error;
+
+        // Link pack beneficiaries covered by this subscription (each keeps own
+        // access). Only insert when the id is a real UUID (a family-pack member);
+        // adhérent-names go to subscription_members below instead (a UUID cast of a
+        // name would fail with a 500).
+        if (packId && body.packMemberIds && Array.isArray(body.packMemberIds)) {
+          const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          for (const mid of body.packMemberIds) {
+            if (typeof mid === "string" && UUID_RE.test(mid)) {
+              await supabase.from("subscription_pack_members").insert({
+                subscription_id: subId, pack_member_id: mid,
+              });
+            }
+          }
+        }
+
+        // Link selected cours (used for attendance + commission)
+        if (body.coursId) {
+          await supabase.from("subscription_cours").insert({
+            subscription_id: subId, cours_id: body.coursId,
+          });
+        }
+
+        // Store every covered member (multi-adhérents + pack beneficiaries), each
+        // keeping its own profile/access. memberIds = direct adhérents,
+        // packMemberIds = family-pack beneficiaries (adhérent names).
+        const covered: string[] = [];
+        if (Array.isArray(body.memberIds)) covered.push(...body.memberIds);
+        if (Array.isArray(body.packMemberIds)) covered.push(...body.packMemberIds);
+        // de-dupe
+        const unique = Array.from(new Set(covered.map((m) => String(m).trim()).filter((m) => m.length > 0)));
+        for (const name of unique) {
+          await supabase.from("subscription_members").insert({
+            subscription_id: subId, member_name: name,
+          });
+        }
+
+        // Per-beneficiary Activités/Groupes/Cours (packCourses): each beneficiary
+        // has its OWN selection (stored normalized).
+        const pc = body.packCourses || {};
+        for (const [name, sel] of Object.entries(pc)) {
+          const selObj = sel as { activityIds?: string[]; groupIds?: string[]; coursIds?: string[] };
+          const acts = selObj?.activityIds || [];
+          const grps = selObj?.groupIds || [];
+          const crss = selObj?.coursIds || [];
+          if (acts.length === 0 && grps.length === 0 && crss.length === 0) continue;
+          for (const activity_id of acts) {
+            for (const group_id of grps) {
+              const coursList = crss.length ? crss : [null];
+              for (const cours_id of coursList) {
+                await supabase.from("subscription_member_courses").insert({
+                  subscription_id: subId, member_name: name,
+                  activity_id, group_id, cours_id,
+                });
+              }
+            }
+          }
+          // If only cours selected without a group, still record them
+          if (acts.length === 0 && grps.length === 0) {
+            for (const cours_id of crss) {
+              await supabase.from("subscription_member_courses").insert({
+                subscription_id: subId, member_name: name, activity_id: null, group_id: null, cours_id,
+              });
+            }
+          }
+        }
 
         // If paid amount > 0, add to caisse
         if (paid > 0) {
@@ -62,7 +165,7 @@ serve(async (req: Request) => {
           });
         }
 
-        return new Response(JSON.stringify({ success: true, subscription: sub }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return new Response(JSON.stringify({ success: true, subscription: sub, insuranceSkipped, insuranceAdded }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       case "list": {
@@ -87,6 +190,14 @@ serve(async (req: Request) => {
           status: s.sub_status,
           payment: "—",
           observation: "",
+          activity: s.activity ?? null,
+          group: s.training_group ?? null,
+          cours: s.course_name ?? null,
+          trainer: s.trainer ?? null,
+          sub_mode: s.sub_mode ?? null,
+          pack_id: s.pack_id ?? null,
+          commissions: s.commissions ?? {},
+          member_ids: s.member_ids ?? [],
         }));
 
         return new Response(JSON.stringify({ subscriptions: flat }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });

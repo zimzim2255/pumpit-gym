@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { User, Phone, CreditCard, Calendar, Mail, MapPin, AlertTriangle, Users, Package, Clock, CheckCircle, XCircle, TrendingUp, DollarSign } from "lucide-react";
+import { User, Phone, CreditCard, Calendar, Mail, MapPin, AlertTriangle, Users, Package, Clock, CheckCircle, XCircle, TrendingUp, DollarSign, ShieldCheck } from "lucide-react";
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_URL + "/functions/v1";
 
@@ -27,6 +27,19 @@ async function subApi(type: string, data?: any) {
   } catch { return null; }
 }
 
+// Check a member's active insurance via the program-manager edge function
+async function insCheck(memberId: string) {
+  try {
+    const res = await fetch(`${FUNCTIONS_URL}/program-manager`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
+      body: JSON.stringify({ type: "insurance-status", memberId }),
+    });
+    if (res.ok) return await res.json();
+    return null;
+  } catch { return null; }
+}
+
 interface MemberDetailCardProps {
   member: any;
   onClose: () => void;
@@ -36,6 +49,7 @@ export default function MemberDetailCard({ member, onClose }: MemberDetailCardPr
   const [subscriptions, setSubscriptions] = useState<any[]>([]);
   const [accessLogs, setAccessLogs] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+  const [insurance, setInsurance] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"info" | "abos" | "acces">("info");
 
@@ -49,6 +63,7 @@ export default function MemberDetailCard({ member, onClose }: MemberDetailCardPr
       const memberSubs = (subData?.subscriptions || []).filter((s: any) => s.member === member.name || s.member_id === member.id);
       setSubscriptions(memberSubs);
       setHistory(histData?.history || []);
+      setInsurance(await insCheck(member.id));
       setLoading(false);
     })();
   }, [member.id, member.name]);
@@ -115,6 +130,39 @@ export default function MemberDetailCard({ member, onClose }: MemberDetailCardPr
                 <StatInline value={subscriptions.length} label="Abonnements" color="emerald" />
                 <StatInline value={`${totalPaid} DH`} label="Total payé" color="blue" />
                 <StatInline value={activeSub ? "Actif" : "Inactif"} label="Statut" color={activeSub ? "emerald" : "red"} />
+                <StatInline value={insurance ? (insurance.insured ? "Couverte" : "Expirée") : "—"} label="Assurance" color={insurance?.insured ? "emerald" : "red"} />
+              </div>
+
+              {/* Assurance & Programme */}
+              <div className="mt-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                  <h4 className="text-sm font-semibold text-white">Assurance & Programme</h4>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/3 rounded-lg p-3">
+                    <div className="text-xs text-white/30 mb-1">Assurance</div>
+                    <div className="text-sm text-white">
+                      {insurance?.insured
+                        ? <>Valable jusqu'au <span className="text-emerald-400 font-mono">{insurance.end_date || "—"}</span></>
+                        : <span className="text-red-400">Non assuré(e) / expirée</span>}
+                    </div>
+                  </div>
+                  <div className="bg-white/3 rounded-lg p-3">
+                    <div className="text-xs text-white/30 mb-1">Programme (abonnement actif)</div>
+                    {activeSub ? (
+                      <div className="text-sm text-white">
+                        {activeSub.activity ? <div><span className="text-white/30">Activité:</span> {activeSub.activity}</div> : null}
+                        {activeSub.training_group ? <div><span className="text-white/30">Groupe:</span> {activeSub.training_group}</div> : null}
+                        {activeSub.course_name ? <div><span className="text-white/30">Cours:</span> {activeSub.course_name}</div> : null}
+                        {activeSub.trainer ? <div><span className="text-white/30">Entraîneur:</span> {activeSub.trainer}</div> : null}
+                        {!activeSub.activity && !activeSub.trainer ? <span className="text-white/40 text-xs">Aucun programme renseigné</span> : null}
+                      </div>
+                    ) : (
+                      <span className="text-white/40 text-xs">Aucun abonnement actif</span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}

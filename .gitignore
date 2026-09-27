@@ -14,3 +14,15 @@ connector/data/
 connector/logs/
 connector/bin/
 connector/tools/cvaccess-report.json
+
+# Supabase local CLI temp state (contains project ref / URLs)
+supabase/.temp/
+
+# Local env snapshot folders
+folder-.env/
+
+# Diagnostic/scratch artifacts
+dbaccess-report.json
+output
+tables
+connector/tools/test-door-entry.ps1
