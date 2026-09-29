@@ -30,6 +30,15 @@ function loadInsurance(): Record<string, string> {
 }
 function saveInsurance(map: Record<string, string>) { localStorage.setItem("gym_insurance", JSON.stringify(map)); }
 function todayStr(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+// Normalize "DD/MM/YYYY" or "YYYY-MM-DD" to "YYYY-MM-DD" for comparison.
+function normDate(s?: string): string {
+  if (!s) return "";
+  const t = s.toString().trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const p = t.split("/");
+  if (p.length === 3 && p[2].length === 4) return `${p[2]}-${p[1]}-${p[0]}`;
+  return t;
+}
 function addYearStr(): string { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }interface SubscriptionAddCardProps {
   form: SubscriptionForm; setForm: Dispatch<SetStateAction<SubscriptionForm>>;
   onClose: () => void; onSave: () => void; members: string[]; subTypes: SubType[];
@@ -41,7 +50,7 @@ function addYearStr(): string { const d = new Date(); d.setFullYear(d.getFullYea
 }
 export default function SubscriptionAddCard({ form, setForm, onClose, onSave, members, subTypes, updateType, updateStart, updatePaid, onMemberChange, onChequeSelect, chequeId, chequeForm, setChequeForm, showChequeAdd, onOpenChequeAdd, onCloseChequeAdd, onSaveCheque, chequeMembers }: SubscriptionAddCardProps) {
   const [prog, setProg] = useState<Prog>(loadProg);
-  const [insByName, setInsByName] = useState<Record<string, number>>({});
+  const [insByName, setInsByName] = useState<Record<string, { amount: number; end: string }>>({});
   useEffect(() => {
     loadAll().then(db => {
       setProg(db);
@@ -60,9 +69,15 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
       } catch { /* keep current prog */ }
     }).catch(() => {});
     getAllInsurance().then(r => {
-      const map: Record<string, number> = {};
+      const map: Record<string, { amount: number; end: string }> = {};
       (r?.insurance || []).forEach((row: any) => {
-        if (row?.member) map[row.member] = Number(row.amount) || 300;
+        if (row?.member) {
+          const end = (row.end || "").toString();
+          const prev = map[row.member];
+          if (!prev || normDate(end) >= normDate(prev.end)) {
+            map[row.member] = { amount: Number(row.amount) || 300, end };
+          }
+        }
       });
       setInsByName(map);
     }).catch(() => {});
@@ -85,22 +100,30 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
   // Insurance premium: prefer the DB amount from the Assurance page, then the
   // legacy localStorage map, then the 300 DH default.
   const assurance = selectedPersons.reduce((sum, name) => {
-    const dbVal = Number(insByName[name] || 0);
+    const dbVal = Number(insByName[name]?.amount || 0);
     const localVal = Number((insStore as any)[name]?.premium || 0);
     return sum + (dbVal || localVal || 300);
   }, 0);
+  // Assurance is NOT part of the abonnement total. It's shown separately so we
+  // can see whether each selected member's insurance is still valid or needs renewal.
+  const assuranceActive = selectedPersons.length > 0 && selectedPersons.every(name => {
+    const end = insByName[name]?.end || (insStore as any)[name]?.end || "";
+    return !!end && normDate(end) >= todayStr();
+  });
   // Remise applies only to the base price (NOT the insurance).
   const priceBase = form.price || 0;
   const remiseRaw = Math.max(0, Number(form.remise) || 0);
   const remise = (form.remiseType || "dh") === "percent"
     ? Math.min(priceBase, (priceBase * remiseRaw) / 100)
     : Math.min(priceBase, remiseRaw);
-  const total = priceBase - remise + assurance;
+  const total = priceBase - remise;
   const [sMember, setSMember] = useState("");
   const [sAct, setSAct] = useState("");
   const [sGrp, setSGrp] = useState("");
   const [sCr, setSCr] = useState("");
   const [showPack, setShowPack] = useState(false);
+  const [showPackPlus1, setShowPackPlus1] = useState(false);
+  const [view, setView] = useState<"nouvel" | "pack_familial" | "pack_plus1">("nouvel");
   const [sPackBenef, setSPackBenef] = useState("");
   const bubble = (patch: any) => setForm({ ...form, ...patch });
   const setMode = (m: string) => bubble({ mode: m });
@@ -114,6 +137,24 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
       ? packMemberIds.filter(x => x !== name)
       : (packMemberIds.length < maxB ? [...packMemberIds, name] : packMemberIds);
     bubble({ packMemberIds: next });
+  };
+  // ── Pack search inside the pack interfaces (Pack familial / Pack +1) ──
+  const [sPackSearch, setSPackSearch] = useState("");
+  const viewPackType = view === "pack_plus1" ? "plus1" : "familial";
+  const viewPacks = packs.filter((p: any) => (p.pack_type || "familial") === viewPackType);
+  const filteredViewPacks = viewPacks.filter((p: any) => !sPackSearch || p.name.toLowerCase().includes(sPackSearch.toLowerCase()));
+  const selectPack = (p: any) => {
+    if (packId === p.id) {
+      const price = subTypes.find(t => t.name === form.type)?.price ?? form.price;
+      const remaining = Math.max(0, Number(price || 0) - (form.paid || 0));
+      const status = remaining === 0 ? "Payé" : (form.paid || 0) === 0 ? "Non payé" : "Paiement partiel";
+      bubble({ packId: "", price: Number(price || 0), remaining, status });
+      return;
+    }
+    const remaining = Math.max(0, (Number(p.price) || 0) - (form.paid || 0));
+    const status = remaining === 0 ? "Payé" : (form.paid || 0) === 0 ? "Non payé" : "Paiement partiel";
+    bubble({ packId: p.id, price: Number(p.price) || 0, remaining, status });
+    setSPackSearch("");
   };
   const packCourses: Record<string, { activityIds: string[]; groupIds: string[]; coursIds: string[] }> = form.packCourses || {};
   const packSel = (name: string) => packCourses[name] || { activityIds: [], groupIds: [], coursIds: [] };
@@ -149,10 +190,20 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
     }
     bubble({ coursIds: next, cours: next.map(crName).join(", "), trainer: [...new Set(coaches)].join(", "), commissions: newCom });
   };
-  const filteredActs = activities.filter(a => !sAct || a.name.toLowerCase().includes(sAct.toLowerCase()));
-  const selGroups = groups.filter(g => actIds.includes(g.activity_id || ""));
+  // A pack may carry injected activities ("pack.activities"): when a pack is chosen,
+  // restrict section 3 to only show those activities (and their groups / cours).
+  const packActIds = (((pack?.activities || []) as string[]).map(String)).filter(Boolean);
+  const packRestrict = !!pack && packActIds.length > 0;
+  const visibleActs = packRestrict ? activities.filter(a => packActIds.includes(a.id)) : activities;
+  const visibleActIds = visibleActs.map(a => a.id);
+  const filteredActs = visibleActs.filter(a => !sAct || a.name.toLowerCase().includes(sAct.toLowerCase()));
+  const selGroups = groups.filter(g => visibleActIds.includes(g.activity_id || "") && actIds.includes(g.activity_id || ""));
   const filteredGrps = selGroups.filter(g => !sGrp || g.name.toLowerCase().includes(sGrp.toLowerCase()));
-  const selCours = cours.filter(c => (c.group_id && grpIds.includes(c.group_id)) || (c.activity_id && actIds.includes(c.activity_id)));
+  const selCours = cours.filter(c => {
+    const g = c.group_id ? groups.find(x => x.id === c.group_id) : null;
+    const visible = visibleActIds.includes(c.activity_id || "") || (g && visibleActIds.includes(g.activity_id || ""));
+    return visible && ((c.group_id && grpIds.includes(c.group_id)) || (c.activity_id && actIds.includes(c.activity_id)));
+  });
   const filteredCrs = selCours.filter(c => !sCr || (c.name || c.day || "").toLowerCase().includes(sCr.toLowerCase()));
   const coachName = (id: string) => trainers.find(t => t.id === id)?.name || "---";
   const actCount = (id: string) => cours.filter(c => c.activity_id === id).length;
@@ -175,7 +226,7 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
         <div className="flex flex-col">
           <p className="text-[10px] font-semibold text-white/50 uppercase mb-1">Activites</p>
           <div className="max-h-36 overflow-y-auto border border-white/10 rounded divide-y divide-white/5 mt-1">
-            {activities.length === 0 ? <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucune</p> : activities.map(a => checkbox(pc.activityIds.includes(a.id), () => togglePackAct(name, a.id), a.name, String(actCount(a.id)), a.id))}
+            {visibleActs.length === 0 ? <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucune</p> : visibleActs.map(a => checkbox(pc.activityIds.includes(a.id), () => togglePackAct(name, a.id), a.name, String(actCount(a.id)), a.id))}
           </div>
         </div>
         <div className="flex flex-col">
@@ -205,12 +256,15 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
   const Sec = ({ children }: { children: any }) => <p className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">{children}</p>;  return (
     <ModalCard title="Creer un Abonnement" onClose={onClose} wide>
       <div className="max-h-[80vh] overflow-y-auto pr-1 space-y-4">
+        <div className="flex gap-2 bg-white/5 rounded-lg p-1">
+          <button onClick={() => setView("nouvel")} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${view === "nouvel" ? "bg-[#EA5800] text-white" : "text-white/50 hover:bg-white/10"}`}>Nouvel abonnement</button>
+          <button onClick={() => setView("pack_familial")} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${view === "pack_familial" ? "bg-[#EA5800] text-white" : "text-white/50 hover:bg-white/10"}`}>Pack familial</button>
+          <button onClick={() => setView("pack_plus1")} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${view === "pack_plus1" ? "bg-[#EA5800] text-white" : "text-white/50 hover:bg-white/10"}`}>Pack +1</button>
+        </div>
+
+        {view === "nouvel" && (
         <div className="border-b border-white/10 pb-3">
           <Sec>1. Adherents</Sec>
-          <div className="flex gap-2">
-            <button onClick={() => setMode("nouvel")} className={`px-3 py-1.5 text-xs rounded font-medium ${mode === "nouvel" ? "bg-[#EA5800] text-white" : "border border-white/15 text-white/60 hover:bg-white/5"}`}>Nouvel abonnement</button>
-            <button onClick={() => setMode("reabonnement")} className={`px-3 py-1.5 text-xs rounded font-medium ${mode === "reabonnement" ? "bg-[#EA5800] text-white" : "border border-white/15 text-white/60 hover:bg-white/5"}`}>Reabonnement</button>
-          </div>
           <div className="mt-2 relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
             <input value={sMember} onChange={e => setSMember(e.target.value)} placeholder="Rechercher des adherents..." className="w-full pl-7 px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40 focus:outline-none focus:border-[#EA5800]" />
@@ -219,40 +273,37 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
             {members.filter(m => !sMember || m.toLowerCase().includes(sMember.toLowerCase())).map(m => checkbox(memberIds.includes(m), () => toggleMember(m), m, "", m))}
           </div>
         </div>
-        <div className="border-b border-white/10 pb-3">
-          <Sec>Pack familial (optionnel)</Sec>
-          <SelectField label="Pack" icon={Users} value={packId} onChange={v => {
-            const p = packs.find(x => x.id === v);
-            const typePrice = subTypes.find(t => t.name === form.type)?.price ?? form.price;
-            const price = p ? Number(p?.price || 0) : Number(typePrice || 0);
-            const remaining = Math.max(0, price - (form.paid || 0));
-            const status = remaining === 0 ? "Payé" : (form.paid || 0) === 0 ? "Non payé" : "Paiement partiel";
-            bubble({ packId: v, packMemberIds: [], price, remaining, status });
-          }} options={[{ value: "", label: "--- Aucun ---" }, ...packs.map(p => ({ value: p.id, label: `${p.name}${Number(p.price) ? ` - ${p.price}DH` : ""}` }))]} placeholder="Selectionner un pack" />
-          {pack && (
-            <>
-              <p className="text-[11px] text-white/50 mt-1">Bénéficiaires du pack — choisir jusqu'à {maxB} adhérents</p>
-              <div className="relative mt-1">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
-                <input value={sPackBenef} onChange={e => setSPackBenef(e.target.value)} placeholder="Rechercher un adhérent..." className="w-full pl-7 px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40 focus:outline-none focus:border-[#EA5800]" />
-              </div>
-              <div className="max-h-44 overflow-y-auto border border-white/10 rounded divide-y divide-white/5 mt-1">
-                {members.filter(m => !sPackBenef || m.toLowerCase().includes(sPackBenef.toLowerCase())).map(m => checkbox(packMemberIds.includes(m), () => toggleBeneficiary(m), m, "", m))}
-              </div>
-              {packMemberIds.map(bname => (
-                <div key={bname} className="border border-[#EA5800]/20 rounded p-2 mt-2">
-                  <p className="text-[11px] font-semibold text-[#EA5800] uppercase tracking-wider mb-1">3. Activites, Groupes & Cours - {bname}</p>
-                  {renderPackCascade(bname)}
-                </div>
-              ))}
-            </>
-          )}
-          <button onClick={() => setShowPack(true)} className="mt-2 px-3 py-1.5 text-xs rounded font-medium border border-[#475569] text-white/70 hover:bg-white/5 inline-flex items-center gap-2"><Plus className="w-3 h-3" /> Nouveau pack familial</button>
-        </div>
+        )}
+        {/* Pack selection & creation moved out of "Nouvel abonnement" (see Packs page / Packs interfaces) */}
         <div className="border-b border-white/10 pb-3">
           <Sec>2. Type d'abonnement</Sec>
+          {view !== "nouvel" && (
+            <div className="mt-2">
+              <label className="block text-[11px] text-white/60 mb-1">Pack {view === "pack_plus1" ? "+1" : "familial"} — rechercher un pack</label>
+              <div className="relative">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
+                <input value={sPackSearch} onChange={e => setSPackSearch(e.target.value)} placeholder={`Rechercher un pack ${view === "pack_plus1" ? "+1" : "familial"}...`} className="w-full pl-7 px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white placeholder-white/40 focus:outline-none focus:border-[#EA5800]" />
+              </div>
+              <div className="max-h-40 overflow-y-auto border border-white/10 rounded divide-y divide-white/5 mt-1">
+                {filteredViewPacks.length === 0 ? (
+                  <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucun pack {view === "pack_plus1" ? "+1" : "familial"} trouvé. Créez-en un dans « Packs & Tarifs ».</p>
+                ) : filteredViewPacks.map(p => {
+                  const sel = packId === p.id;
+                  return (
+                    <button key={p.id} onClick={() => selectPack(p)} className={`w-full text-left px-2 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/5 ${sel ? "bg-[#EA5800]/10" : ""}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`w-4 h-4 rounded border shrink-0 inline-flex items-center justify-center ${sel ? "bg-[#EA5800] border-[#EA5800]" : "border-white/25"}`}>{sel ? <span className="text-white text-[10px]">x</span> : null}</span>
+                        <span className="font-medium truncate text-white/90 pr-1">{p.name}</span>
+                      </div>
+                      <span className="font-mono text-[#EA5800] text-[11px] shrink-0">{Number(p.price) || 0} DH</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {packId && pack && <p className="text-[10px] text-emerald-400 mt-1">✓ Pack {pack.name} sélectionné — {Number(pack.price) || 0} DH</p>}
+            </div>
+          )}
           <SelectField label="Type d'abonnement" icon={CreditCard} value={form.type} onChange={updateType} options={subTypes.map(t => ({ value: t.name, label: `${t.name} - ${t.price}DH` }))} placeholder="Type abonnement" />
-          <InputField label="Telephone" icon={Phone} value={form.phone} onChange={v => setForm({ ...form, phone: v as string })} placeholder="Telephone" />
         </div>        {!(pack && packMemberIds.length) && (
         <div className="border-b border-white/10 pb-3">
           <Sec>3. Activites, Groupes / Cours</Sec>
@@ -309,25 +360,27 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
               <p className="text-[10px] text-white/40 -mt-0.5">S'applique au prix, pas à l'assurance</p>
             </div>
             <div>
-              <label className="block text-[11px] text-white/60 mb-1">Assurance (Dhs)</label>
-              <input type="number" value={assurance} onChange={() => {}} disabled className="w-full px-2 py-1.5 text-sm bg-white/5 border border-white/10 rounded text-white/60 disabled:opacity-60" />
+              <label className="block text-[11px] text-white/60 mb-1">Assurance (non incluse) — Dhs</label>
+              <div className="px-2 py-1.5 text-sm rounded bg-white/5 text-white/70">{assurance}</div>
             </div>
           </div>
-          <div className="mt-2">
-            <div className="flex justify-between text-[11px] text-white/50">
-              <span>Sous-total (prix − remise)</span>
-              <span className="font-mono">{(form.price || 0) - remise} Dhs</span>
-            </div>
-            <div className="flex justify-between text-[11px] text-white/50 mt-1">
-              <span>+ Assurance</span>
+          <div className="mt-2 flex justify-between items-center text-[11px] text-white/50">
+            <span>Sous-total abonnement (prix − remise)</span>
+            <span className="font-mono">{priceBase - remise} Dhs</span>
+          </div>
+          <div className="mt-2 rounded bg-white/5 px-3 py-2 text-[11px] text-white/50">
+            <div className="flex justify-between">
+              <span>Assurance (non incluse au total)</span>
               <span className="font-mono">{assurance} Dhs</span>
             </div>
+            {selectedPersons.length === 0 ? (
+              <div className="mt-1 text-white/40">Assurance appliquée automatiquement selon les adhérents sélectionnés.</div>
+            ) : assuranceActive ? (
+              <div className="mt-1 text-emerald-400">✓ Assurance couverte pour {selectedPersons.length} adhérent(s)</div>
+            ) : (
+              <div className="mt-1 text-red-400">{selectedPersons.length} adhérent(s) — assurance à souscrire ou expirée</div>
+            )}
           </div>
-          {selectedPersons.length === 0 ? (
-            <div className="px-3 py-2 mt-2 rounded bg-white/5 text-white/50 text-[11px]">Assurance appliquée automatiquement selon les adhérents sélectionnés.</div>
-          ) : (
-            <div className="px-3 py-2 mt-2 rounded bg-[#EA5800]/10 border border-[#EA5800]/20 text-white/80 text-[11px]">Assurance (auto, 300 Dhs/adherent) — {selectedPersons.length} adhérent(s) · {assurance} Dhs</div>
-          )}
           <div className="mt-2 flex justify-between items-center border-t border-white/10 pt-2">
             <span className="text-sm font-semibold text-white">Total a payer</span>
             <span className="text-lg font-bold text-[#EA5800]">{total.toLocaleString()} Dhs</span>
@@ -357,6 +410,7 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
         <ChequeAddCard form={chequeForm} setForm={setChequeForm} onClose={onCloseChequeAdd || (() => {})} onSave={onSaveCheque || (() => {})} members={chequeMembers || []} />
       )}
       {showPack && <PackCreator onClose={() => setShowPack(false)} />}
+      {showPackPlus1 && <PackCreator type="plus1" onClose={() => setShowPackPlus1(false)} />}
       <FormActions onCancel={onClose} onSave={onSave} saveLabel="Creer l'abonnement" />
     </ModalCard>
   );

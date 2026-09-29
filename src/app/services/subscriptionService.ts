@@ -43,7 +43,7 @@ async function subApi(type: string, data?: any) {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/subscription-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     throw new Error("API error");
@@ -96,7 +96,7 @@ async function progApi(type: string, data?: any) {
     const res = await fetch(`${SUPABASE_URL}/functions/v1/program-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     return null;

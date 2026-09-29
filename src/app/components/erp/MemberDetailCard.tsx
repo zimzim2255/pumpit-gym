@@ -8,7 +8,7 @@ async function api(type: string, data?: any) {
     const res = await fetch(`${FUNCTIONS_URL}/member-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     return null;
@@ -20,7 +20,7 @@ async function subApi(type: string, data?: any) {
     const res = await fetch(`${FUNCTIONS_URL}/subscription-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     return null;
@@ -38,6 +38,22 @@ async function insCheck(memberId: string) {
     if (res.ok) return await res.json();
     return null;
   } catch { return null; }
+}
+
+function loadPacks(): any[] {
+  try { const r = localStorage.getItem("gym_programme_data"); if (r) return (JSON.parse(r).packs) || []; } catch {}
+  return [];
+}
+// Returns the abonnement kind: normal / pack familial / pack +1
+function abonnementType(s: any): { label: string; color: string } {
+  const packs = loadPacks();
+  if (s && s.pack_id) {
+    const pack = packs.find((p: any) => p.id === s.pack_id);
+    if (pack && (pack.pack_type || "familial") === "plus1") return { label: "Pack +1", color: "bg-[#EA5800]/15 text-[#EA5800]" };
+    if (pack) return { label: "Pack familial", color: "bg-blue-500/15 text-blue-400" };
+    return { label: "Pack", color: "bg-blue-500/15 text-blue-400" };
+  }
+  return { label: "Abonnement normal", color: "bg-white/10 text-white/60" };
 }
 
 interface MemberDetailCardProps {
@@ -150,6 +166,7 @@ export default function MemberDetailCard({ member, onClose }: MemberDetailCardPr
                   </div>
                   <div className="bg-white/3 rounded-lg p-3">
                     <div className="text-xs text-white/30 mb-1">Programme (abonnement actif)</div>
+                    {activeSub && (() => { const t = abonnementType(activeSub); return <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${t.color}`}>{t.label}</span>; })()}
                     {activeSub ? (
                       <div className="text-sm text-white">
                         {activeSub.activity ? <div><span className="text-white/30">Activité:</span> {activeSub.activity}</div> : null}
@@ -176,12 +193,15 @@ export default function MemberDetailCard({ member, onClose }: MemberDetailCardPr
                 <div className="text-center text-white/20 text-sm py-10">Aucun abonnement</div>
               ) : (
                 <div className="space-y-3">
-                  {subscriptions.map((s, i) => (
+                  {subscriptions.map((s, i) => {
+                    const atype = abonnementType(s);
+                    return (
                     <div key={i} className="bg-white/3 border border-white/5 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-mono text-[#f04e23]">{s.id || `#${i + 1}`}</span>
                           <span className="px-2 py-0.5 rounded bg-[#f04e23]/10 text-[#f04e23] text-xs font-medium">{s.type || s.sub_type}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${atype.color}`}>{atype.label}</span>
                         </div>
                         <Badge2 status={s.status || s.sub_status} />
                       </div>
@@ -192,7 +212,8 @@ export default function MemberDetailCard({ member, onClose }: MemberDetailCardPr
                         <div><span className="text-white/30">Reste:</span> <span className="text-red-400 font-mono">{s.remaining > 0 ? `${s.remaining} DH` : "0 DH"}</span></div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 

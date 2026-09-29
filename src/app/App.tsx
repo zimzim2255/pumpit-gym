@@ -490,7 +490,7 @@ async function api(type: string, data?: any) {
     const res = await fetch(`${FUNCTIONS_URL}/member-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     throw new Error("API error");
@@ -502,7 +502,7 @@ async function boutiqueApi(type: string, data?: any) {
     const res = await fetch(`${FUNCTIONS_URL}/boutique-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     throw new Error("API error");
@@ -720,7 +720,7 @@ async function subApi(type: string, data?: any) {
     const res = await fetch(`${FUNCTIONS_URL}/subscription-manager`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-      body: JSON.stringify({ type, ...data }),
+      body: JSON.stringify({ ...data, type }),
     });
     if (res.ok) return await res.json();
     throw new Error("API error");

@@ -16,7 +16,7 @@ async function call(type: string, payload: any = {}): Promise<Resp> {
       "Content-Type": "application/json",
       Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
     },
-    body: JSON.stringify({ type, ...payload }),
+    body: JSON.stringify({ ...payload, type }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || `program-manager ${type} failed`);
@@ -93,7 +93,7 @@ export async function getAttendance(payload: any = {}): Promise<any> {
   const res = await fetch(ATTENDANCE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-    body: JSON.stringify({ type: "attendance-list", ...payload }),
+    body: JSON.stringify({ ...payload, type: "attendance-list" }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data?.error || "attendance failed");

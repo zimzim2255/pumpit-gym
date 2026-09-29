@@ -167,6 +167,11 @@ serve(async (req: Request) => {
         if (!body.name) return ok({ error: "Missing name" }, 400);
         const { data, error } = await supabase.from("family_packs").insert({
           name: body.name, price: Number(body.price) || 0, photo: body.photo || "",
+          max_beneficiaries: Number(body.max_beneficiaries) || 3,
+          duration: body.duration || "",
+          status: body.status || "Actif",
+          pack_type: (body.pack_type === "plus1") ? "plus1" : "familial",
+          activities: Array.isArray(body.activities) ? body.activities : [],
         }).select().single();
         if (error) throw error;
         if (Array.isArray(body.members)) {
@@ -183,6 +188,10 @@ serve(async (req: Request) => {
       case "packs-update": {
         const { data, error } = await supabase.from("family_packs").update({
           name: body.name, price: Number(body.price) || 0, status: body.status, photo: body.photo || "",
+          max_beneficiaries: Number(body.max_beneficiaries) || 3,
+          duration: body.duration || "",
+          pack_type: (body.pack_type === "plus1") ? "plus1" : "familial",
+          activities: Array.isArray(body.activities) ? body.activities : [],
         }).eq("id", body.id).select().single();
         if (error) throw error;
         return ok({ pack: data });

@@ -23,6 +23,16 @@ function loadInsurance(): Record<string, any> {
   try { const r = localStorage.getItem("gym_insurance"); if (r) return JSON.parse(r); } catch {}
   return {};
 }
+// Normalize "DD/MM/YYYY" or "YYYY-MM-DD" to "YYYY-MM-DD" for comparison.
+function normDate(s?: string): string {
+  if (!s) return "";
+  const t = s.toString().trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  const p = t.split("/");
+  if (p.length === 3 && p[2].length === 4) return `${p[2]}-${p[1]}-${p[0]}`;
+  return t;
+}
+function todayYmd(): string { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 interface SubscriptionEditCardProps {
   form: SubscriptionForm; setForm: Dispatch<SetStateAction<SubscriptionForm>>;
   onClose: () => void; onSave: () => void; members: string[]; subTypes: SubType[];
@@ -30,7 +40,7 @@ interface SubscriptionEditCardProps {
 }
 export default function SubscriptionEditCard({ form, setForm, onClose, onSave, members, subTypes, updateType, updateStart, updatePaid }: SubscriptionEditCardProps) {
   const [prog, setProg] = useState<Prog>(loadProg);
-  const [insByName, setInsByName] = useState<Record<string, number>>({});
+  const [insByName, setInsByName] = useState<Record<string, { amount: number; end: string }>>({});
   useEffect(() => {
     loadAll().then(db => {
       setProg(db);
@@ -49,9 +59,15 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
       } catch { /* keep current prog */ }
     }).catch(() => {});
     getAllInsurance().then(r => {
-      const map: Record<string, number> = {};
+      const map: Record<string, { amount: number; end: string }> = {};
       (r?.insurance || []).forEach((row: any) => {
-        if (row?.member) map[row.member] = Number(row.amount) || 300;
+        if (row?.member) {
+          const end = (row.end || "").toString();
+          const prev = map[row.member];
+          if (!prev || normDate(end) >= normDate(prev.end)) {
+            map[row.member] = { amount: Number(row.amount) || 300, end };
+          }
+        }
       });
       setInsByName(map);
     }).catch(() => {});
@@ -72,16 +88,22 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
   const insStore = loadInsurance();
   const selectedPersons = memberIds.concat(packMemberIds).filter((v, i, a) => a.indexOf(v) === i);
   const assurance = selectedPersons.reduce((sum, name) => {
-    const dbVal = Number(insByName[name] || 0);
+    const dbVal = Number(insByName[name]?.amount || 0);
     const localVal = Number((insStore as any)[name]?.premium || 0);
     return sum + (dbVal || localVal || 300);
   }, 0);
+  // Assurance is NOT part of the abonnement total. It's shown separately so we
+  // can see whether each selected member's insurance is still valid or needs renewal.
+  const assuranceActive = selectedPersons.length > 0 && selectedPersons.every(name => {
+    const end = insByName[name]?.end || (insStore as any)[name]?.end || "";
+    return !!end && normDate(end) >= todayYmd();
+  });
   const priceBase = form.price || 0;
   const remiseRaw = Math.max(0, Number(form.remise) || 0);
   const remise = (form.remiseType || "dh") === "percent"
     ? Math.min(priceBase, (priceBase * remiseRaw) / 100)
     : Math.min(priceBase, remiseRaw);
-  const total = priceBase - remise + assurance;  const [sMember, setSMember] = useState("");
+  const total = priceBase - remise;  const [sMember, setSMember] = useState("");
   const [sAct, setSAct] = useState("");
   const [sGrp, setSGrp] = useState("");
   const [sCr, setSCr] = useState("");
@@ -113,10 +135,20 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
   const togglePackAct = (name: string, id: string) => { const s = packSel(name); const next = s.activityIds.includes(id) ? s.activityIds.filter(x => x !== id) : [...s.activityIds, id]; setPackSel(name, "activityIds", next); };
   const togglePackGrp = (name: string, id: string) => { const s = packSel(name); const next = s.groupIds.includes(id) ? s.groupIds.filter(x => x !== id) : [...s.groupIds, id]; setPackSel(name, "groupIds", next); };
   const togglePackCr = (name: string, id: string) => { const s = packSel(name); const next = s.coursIds.includes(id) ? s.coursIds.filter(x => x !== id) : [...s.coursIds, id]; setPackSel(name, "coursIds", next); };
-  const filteredActs = activities.filter(a => !sAct || a.name.toLowerCase().includes(sAct.toLowerCase()));
-  const selGroups = groups.filter(g => actIds.includes(g.activity_id || ""));
+  // A pack may carry injected activities ("pack.activities"): when a pack is chosen,
+  // restrict section 3 to only show those activities (and their groups / cours).
+  const packActIds = (((pack?.activities || []) as string[]).map(String)).filter(Boolean);
+  const packRestrict = !!pack && packActIds.length > 0;
+  const visibleActs = packRestrict ? activities.filter(a => packActIds.includes(a.id)) : activities;
+  const visibleActIds = visibleActs.map(a => a.id);
+  const filteredActs = visibleActs.filter(a => !sAct || a.name.toLowerCase().includes(sAct.toLowerCase()));
+  const selGroups = groups.filter(g => visibleActIds.includes(g.activity_id || "") && actIds.includes(g.activity_id || ""));
   const filteredGrps = selGroups.filter(g => !sGrp || g.name.toLowerCase().includes(sGrp.toLowerCase()));
-  const selCours = cours.filter(c => (c.group_id && grpIds.includes(c.group_id)) || (c.activity_id && actIds.includes(c.activity_id)));
+  const selCours = cours.filter(c => {
+    const g = c.group_id ? groups.find(x => x.id === c.group_id) : null;
+    const visible = visibleActIds.includes(c.activity_id || "") || (g && visibleActIds.includes(g.activity_id || ""));
+    return visible && ((c.group_id && grpIds.includes(c.group_id)) || (c.activity_id && actIds.includes(c.activity_id)));
+  });
   const filteredCrs = selCours.filter(c => !sCr || (c.name || c.day || "").toLowerCase().includes(sCr.toLowerCase()));
   const coachName = (id: string) => trainers.find(t => t.id === id)?.name || "---";
   const coachPct = (id: string) => { const t = trainers.find(x => x.id === id); return t ? `${t.commission_percent || 0}%` : "---"; };
@@ -140,7 +172,7 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
         <div className="flex flex-col">
           <p className="text-[10px] font-semibold text-white/50 uppercase mb-1">Activites</p>
           <div className="max-h-36 overflow-y-auto border border-white/10 rounded divide-y divide-white/5 mt-1">
-            {activities.length === 0 ? <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucune</p> : activities.map(a => checkbox(pc.activityIds.includes(a.id), () => togglePackAct(name, a.id), a.name, String(actCount(a.id)), a.id))}
+            {visibleActs.length === 0 ? <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucune</p> : visibleActs.map(a => checkbox(pc.activityIds.includes(a.id), () => togglePackAct(name, a.id), a.name, String(actCount(a.id)), a.id))}
           </div>
         </div>
         <div className="flex flex-col">
@@ -209,7 +241,6 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
         <div className="border-b border-white/10 pb-3">
           <Sec>2. Type d'abonnement</Sec>
           <SelectField label="Type d'abonnement" icon={CreditCard} value={form.type} onChange={updateType} options={subTypes.map(t => ({ value: t.name, label: `${t.name} - ${t.price}DH` }))} placeholder="Type abonnement" />
-          <InputField label="Telephone" icon={Phone} value={form.phone} onChange={v => setForm({ ...form, phone: v as string })} placeholder="Telephone" />
         </div>        {!(pack && packMemberIds.length) && (
         <div className="border-b border-white/10 pb-3">
           <Sec>3. Activites, Groupes / Cours</Sec>
@@ -266,19 +297,27 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
               <p className="text-[10px] text-white/40">S'applique au prix, pas à l'assurance</p>
             </div>
             <div>
-              <label className="block text-[11px] text-white/60 mb-1">Assurance (Dhs)</label>
+              <label className="block text-[11px] text-white/60 mb-1">Assurance (non incluse) — Dhs</label>
               <div className="px-2 py-1.5 text-sm rounded bg-white/5 text-white/70">{assurance}</div>
             </div>
           </div>
-          <div className="mt-2 flex justify-between text-[11px] text-white/50">
-            <span>Sous-total (prix − remise)</span>
-            <span className="font-mono">{(form.price || 0) - remise} Dhs</span>
+          <div className="mt-2 flex justify-between items-center text-[11px] text-white/50">
+            <span>Sous-total abonnement (prix − remise)</span>
+            <span className="font-mono">{priceBase - remise} Dhs</span>
           </div>
-          {selectedPersons.length === 0 ? (
-            <div className="px-3 py-2 mt-2 rounded bg-white/5 text-white/50 text-[11px]">Assurance appliquee automatiquement selon les adherents selectionnes.</div>
-          ) : (
-            <div className="px-3 py-2 mt-2 rounded bg-[#EA5800]/10 border border-[#EA5800]/20 text-white/80 text-[11px]">Assurance (auto) - {selectedPersons.length} adherent(s) - {assurance} Dhs</div>
-          )}
+          <div className="mt-2 rounded bg-white/5 px-3 py-2 text-[11px] text-white/50">
+            <div className="flex justify-between">
+              <span>Assurance (non incluse au total)</span>
+              <span className="font-mono">{assurance} Dhs</span>
+            </div>
+            {selectedPersons.length === 0 ? (
+              <div className="mt-1 text-white/40">Assurance appliquée automatiquement selon les adhérents sélectionnés.</div>
+            ) : assuranceActive ? (
+              <div className="mt-1 text-emerald-400">✓ Assurance couverte pour {selectedPersons.length} adhérent(s)</div>
+            ) : (
+              <div className="mt-1 text-red-400">{selectedPersons.length} adhérent(s) — assurance à souscrire ou expirée</div>
+            )}
+          </div>
           <div className="mt-2 flex justify-between items-center border-t border-white/10 pt-2">
             <span className="text-sm font-semibold text-white">Total a payer</span>
             <span className="text-lg font-bold text-[#EA5800]">{total.toLocaleString()} Dhs</span>

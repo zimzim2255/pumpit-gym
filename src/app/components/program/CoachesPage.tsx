@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Plus, Trash2, Eye, Pencil, Phone, UserRound, Calendar, Upload } from "lucide-react";
 import ModalCard from "../ui/ModalCard";
 import { InputField } from "../ui/FormField";
-import { loadAll, createTrainer, updateTrainer, deleteTrainer } from "../../services/programService";
+import { loadAll, createTrainer, updateTrainer, deleteTrainer, getAttendance } from "../../services/programService";
 import { uploadMemberPhoto } from "../../services/cloudinaryService";
 const STORE_KEY = "gym_programme_data";
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_URL + "/functions/v1";
@@ -33,6 +33,17 @@ export default function CoachesPage() {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [subs, setSubs] = useState<any[]>([]);
+  const [att, setAtt] = useState<any[]>([]);
+  const [attFrom, setAttFrom] = useState("");
+  const [attTo, setAttTo] = useState("");
+  const [detailTab, setDetailTab] = useState<"assiduite" | "absences" | "commissions">("assiduite");
+  const [detailMembers, setDetailMembers] = useState<string[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberSelOpen, setMemberSelOpen] = useState(false);
+  const [attLoading, setAttLoading] = useState(false);
+  const [assPage, setAssPage] = useState(1);
+  const [absPage, setAbsPage] = useState(1);
+  const [comPage, setComPage] = useState(1);
   const buildTrainers = (dbTrainers: any[], sList: any[]) => {
     const byName = new Map<string, any>();
     (dbTrainers || []).forEach(t => byName.set(t.name, t));
@@ -53,6 +64,20 @@ export default function CoachesPage() {
       subList().then(s => { setSubs(s); refresh(s); }).catch(() => {});
     });
   }, []);
+  // Load attendance (présence / absences) for the coach being viewed
+  useEffect(() => {
+    setDetailMembers([]);
+    setMemberSearch("");
+    setMemberSelOpen(false);
+    if (detail?.name) {
+      setAttLoading(true);
+      getAttendance({}).then(r => setAtt(r?.attendance || [])).catch(() => setAtt([])).finally(() => setAttLoading(false));
+    } else {
+      setAtt([]);
+    }
+  }, [detail]);
+  // Reset pagination when filters change
+  useEffect(() => { setAssPage(1); setAbsPage(1); setComPage(1); }, [detailMembers, attFrom, attTo]);
   const resetForm = () => { setName(""); setPhone(""); setSpecialty(""); setPhoto(""); setPreview(null); };
   const openEdit = (t: any) => {
     setEditTarget(t);
@@ -94,7 +119,7 @@ const create = () => {
   const del = (id: string) => {
     deleteTrainer(id).then(() => refresh());
   };
-  const coachSubs = (name: string) => (subs || []).filter(s => s.trainer === name);
+  const coachSubs = (name: string) => { const nm = (name || "").trim().toLowerCase(); return (subs || []).filter(s => (s.trainer || "").trim().toLowerCase() === nm); };
   const subCommission = (sub: any) => {
     const cm: Record<string, { percent?: number; amount?: number }> = sub.commissions || {};
     const price = Number(sub.price || 0);
@@ -111,6 +136,68 @@ const create = () => {
     if (src) return <img src={src} alt={t.name || ""} className={`${size} ${rounded} object-cover`} />;
     return <div className={`${size} ${rounded} bg-[#EA5800]/20 flex items-center justify-center text-sm font-bold text-[#EA5800]`}>{init(t.name)}</div>;
   };
+  const memberAvatar = (name: string) => (
+    <div className="w-8 h-8 rounded-full bg-[#EA5800]/20 flex items-center justify-center text-sm font-bold text-[#EA5800]">{name?.charAt?.(0)?.toUpperCase?.() || ""}</div>
+  );
+  const attCoach = (name: string) => {
+    const nm = (name || "").trim().toLowerCase();
+    return att.filter((r: any) => (r.trainer || "").trim().toLowerCase() === nm
+      && (!detailMembers.length || detailMembers.some(m => (m || "").trim() === (r.member || "").trim()))
+      && (!attFrom || String(r.date || "").slice(0, 10) >= attFrom)
+      && (!attTo || String(r.date || "").slice(0, 10) <= attTo));
+  };
+  const attPresent = (name: string) => attCoach(name).filter((r: any) => r.status === "Présent");
+  const attAbsent = (name: string) => attCoach(name).filter((r: any) => r.status === "Absent");
+  const attCommission = (name: string) => attPresent(name).reduce((s, r) => s + Number(r.pay || 0), 0);
+  const attMembers = (name: string) => {
+    const map = new Map<string, { member: string; present: number; absent: number }>();
+    attCoach(name).forEach((r: any) => {
+      const cur = map.get(r.member) || { member: r.member, present: 0, absent: 0 };
+      if (r.status === "Présent") cur.present++; else cur.absent++;
+      map.set(r.member, cur);
+    });
+    return [...map.values()].sort((a, b) => b.absent - a.absent || a.member.localeCompare(b.member));
+  };
+  const coachMemberNames = (name: string) => {
+    const set = new Set<string>();
+    const nm = (name || "").trim().toLowerCase();
+    att.filter((r: any) => (r.trainer || "").trim().toLowerCase() === nm).forEach(r => { if (r.member) set.add(String(r.member).trim()); });
+    coachSubs(name).forEach(s => { if (s.member) set.add(String(s.member).trim()); });
+    return [...set].sort();
+  };
+  const detailSubs = (name: string) => coachSubs(name).filter((s: any) => !detailMembers.length || detailMembers.some(m => (m || "").trim() === String(s.member || "").trim()));
+  const detailSubsTotal = (name: string) => detailSubs(name).reduce((sum, s) => sum + subCommission(s), 0);
+  // ── Pagination (20 lignes/page) ──
+  const PAGE_N = 20;
+  const pageSlice = (arr: any[], p: number) => { const s = (p - 1) * PAGE_N; return arr.slice(s, s + PAGE_N); };
+  const pageBar = (total: number, p: number, setP: (n: number) => void) => {
+    const pages = Math.max(1, Math.ceil(total / PAGE_N));
+    if (total <= PAGE_N) return null;
+    return (
+      <div className="flex items-center gap-2 mt-2 text-[11px] text-white/50">
+        <button disabled={p <= 1} onClick={() => setP(Math.max(1, p - 1))} className="px-2 py-0.5 rounded bg-white/5 text-white/60 disabled:opacity-40">←</button>
+        <span className="px-2 py-0.5 rounded bg-white/5">Page {p} / {pages} • {total} ligne(s)</span>
+        <button disabled={p >= pages} onClick={() => setP(Math.min(pages, p + 1))} className="px-2 py-0.5 rounded bg-white/5 text-white/60 disabled:opacity-40">→</button>
+      </div>
+    );
+  };
+  // ── Assiduité: liste TOUS les adhérents du coach (abonnements + présence) ──
+  const attCounts = (name: string, member: string) => {
+    let present = 0, absent = 0;
+    attCoach(name).forEach((r: any) => { if ((r.member || "").trim() === (member || "").trim()) { if (r.status === "Présent") present++; else absent++; } });
+    return { present, absent };
+  };
+  const assiduiteRows = (name: string) => {
+    const members = coachMemberNames(name).filter(m => !detailMembers.length || detailMembers.some(x => (x || "").trim() === (m || "").trim()));
+    return members.map(m => ({ member: m, ...attCounts(name, m) }));
+  };
+  const statCard = (label: string, value: string, sub: string, cls: string) => (
+    <div className={`rounded-lg border border-white/5 p-3 ${cls}`}>
+      <div className="text-[11px] text-white/40 uppercase tracking-wider">{label}</div>
+      <div className="text-xl font-bold text-white">{value}</div>
+      <div className="text-[11px] text-white/40">{sub}</div>
+    </div>
+  );
   const photoField = () => (
     <div>
       <div className="flex items-center gap-2 mb-2">
@@ -220,38 +307,185 @@ const create = () => {
       </div>
 
       {detail && (
-        <ModalCard title={`Détails — ${detail.name}`} onClose={() => setDetail(null)} wide>
-          <div className="max-h-[75vh] overflow-y-auto space-y-4">
-            <div className="flex items-center gap-3">
-              {avatar(detail, "w-16 h-16", "rounded-xl")}
-              <div className="flex-1">
-                <div className="text-xs text-white/40">Spécialité</div>
-                <div className="text-white/80">{detail.specialty || "—"}</div>
+        <ModalCard title={`Détails coach — ${detail.name}`} onClose={() => setDetail(null)} wide size="xl">
+          <div className="max-h-[85vh] overflow-y-auto pr-1 space-y-4">
+            {/* En-tête coach + total à payer */}
+            <div className="rounded-xl bg-white/5 border border-white/10 p-4 flex items-center gap-4">
+              {avatar(detail, "w-20 h-20", "rounded-2xl")}
+              <div className="flex-1 min-w-0">
+                <div className="text-lg font-bold text-white">{detail.name}</div>
+                <div className="text-xs text-white/40 mt-1">Spécialité : {detail.specialty || "—"}</div>
+                {detail.phone && <div className="text-xs text-white/40">Téléphone : {detail.phone}</div>}
               </div>
-            </div>
-            <div className="p-3 rounded bg-white/5 flex items-center justify-between">
               <div className="text-right">
-                <div className="text-xs text-white/40">Total commissions</div>
-                <div className="text-lg font-bold text-emerald-400">{totalOf(detail).toLocaleString()} DH</div>
+                <div className="text-[11px] text-white/40 uppercase tracking-wider">Total à payer (commissions)</div>
+                <div className="text-2xl font-bold text-emerald-400">{detailSubsTotal(detail.name).toLocaleString()} DH</div>
+                <div className="text-[11px] text-white/40">{detailSubs(detail.name).length} abonnement(s) • {attPresent(detail.name).length} présent(s) • {attAbsent(detail.name).length} absent(s)</div>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead><tr className="border-b border-white/5">
-                  <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Abonnement</th>
-                  <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Commission</th>
-                </tr></thead>
-                <tbody className="divide-y divide-white/5">
-                  {coachSubs(detail.name).map((s: any, i: number) => (
-                    <tr key={s.id || i} className="border-b border-white/5">
-                      <td className="px-3 py-2.5"><span className="font-mono text-xs text-[#EA5800]">{s.id}</span> <span className="text-white/80">— {s.member}</span></td>
-                      <td className="px-3 py-2.5 text-right font-mono text-xs text-emerald-400">{subCommission(s)} DH</td>
-                    </tr>
-                  ))}
-                  {coachSubs(detail.name).length === 0 && <tr><td colSpan={2} className="px-3 py-6 text-center text-white/20 text-sm">Aucun abonnement assigné</td></tr>}
-                </tbody>
-              </table>
+
+            {/* Cartes récapitulatives */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {statCard("Total commissions", `${detailSubsTotal(detail.name).toLocaleString()} DH`, "à payer sur les abonnements", "bg-[#EA5800]/10")}
+              {statCard("Adhérents", String(coachMemberNames(detail.name).length), "sous ce coach", "bg-white/5")}
+              {statCard("Jours présents", String(attPresent(detail.name).length), "passages au doigt", "bg-emerald-500/10")}
+              {statCard("Jours absents", String(attAbsent(detail.name).length), "manqués, sans passage", "bg-red-500/10")}
             </div>
+
+            {/* Filtre par date */}
+            <div className="rounded-md bg-white/5 border border-white/10 px-3 py-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-white/50 uppercase tracking-wider">Filtrer</span>
+              <label className="text-[10px] text-white/50">Du
+                <input type="date" value={attFrom} onChange={e => setAttFrom(e.target.value)} className="mx-1 px-1.5 py-1 text-xs bg-white/5 border border-white/10 rounded text-white" />
+              </label>
+              <label className="text-[10px] text-white/50">Au
+                <input type="date" value={attTo} onChange={e => setAttTo(e.target.value)} className="mx-1 px-1.5 py-1 text-xs bg-white/5 border border-white/10 rounded text-white" />
+              </label>
+              {(attFrom || attTo) && <button onClick={() => { setAttFrom(""); setAttTo(""); }} className="text-[11px] text-[#EA5800] hover:underline">Réinitialiser dates</button>}
+            </div>
+
+            {/* Sélecteur d'adhérents (recherche + multi-sélection) — dropdown compact */}
+            <div className="rounded-md bg-white/5 border border-white/10 relative">
+              <button type="button" onClick={() => setMemberSelOpen(o => !o)} className="w-full flex items-center justify-between px-2.5 py-2 text-[12px] text-white/80">
+                <span className="text-white/80">Adhérents {detailMembers.length ? `(${detailMembers.length} sél.)` : "(tous)"}</span>
+                <span className={`text-white/40 transition-transform ${memberSelOpen ? "rotate-180" : ""}`}>▾</span>
+              </button>
+              {memberSelOpen && (
+                <div className="absolute left-0 right-0 z-30 mt-1 rounded-md bg-[#181b28] border border-white/10 shadow-xl">
+                  <div className="flex items-center gap-2 px-2 py-1.5">
+                    <input value={memberSearch} onChange={e => setMemberSearch(e.target.value)} placeholder="Rechercher un adhérent..." className="flex-1 min-w-[120px] px-2 py-1 text-xs bg-white/5 border border-white/10 rounded text-white placeholder-white/40" />
+                    {(detailMembers.length > 0 || memberSearch) && <button onClick={() => { setDetailMembers([]); setMemberSearch(""); }} className="text-[11px] text-[#EA5800] hover:underline shrink-0">Tous</button>}
+                  </div>
+                  <div className="max-h-56 overflow-y-auto border border-white/10 rounded divide-y divide-white/5">
+                    <button key="__all__" type="button" onClick={() => { setDetailMembers([]); setMemberSearch(""); }} className="w-full text-left px-2 py-1.5 text-[12px] flex items-center gap-2 hover:bg-white/5">
+                      <span className={`w-4 h-4 rounded border shrink-0 inline-flex items-center justify-center ${detailMembers.length === 0 ? "bg-[#EA5800] border-[#EA5800]" : "border-white/25"}`}>{detailMembers.length === 0 ? <span className="text-white text-[10px]">x</span> : null}</span>
+                      <span className="font-medium text-white/90">Tous</span>
+                    </button>
+                    {coachMemberNames(detail.name).filter(m => !memberSearch || m.toLowerCase().includes(memberSearch.toLowerCase())).map(m => {
+                      const check = detailMembers.includes(m);
+                      return (
+                        <button key={m} type="button" onClick={() => setDetailMembers(check ? detailMembers.filter(x => x !== m) : [...detailMembers, m])} className="w-full text-left px-2 py-1.5 text-[12px] flex items-center gap-2 hover:bg-white/5">
+                          <span className={`w-4 h-4 rounded border shrink-0 inline-flex items-center justify-center ${check ? "bg-[#EA5800] border-[#EA5800]" : "border-white/25"}`}>{check ? <span className="text-white text-[10px]">x</span> : null}</span>
+                          <span className="truncate text-white/90">{m}</span>
+                        </button>
+                      );
+                    })}
+                    {coachMemberNames(detail.name).length === 0 && <p className="px-2 py-3 text-[11px] text-white/40 italic">Aucun adhérent sous ce coach</p>}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Onglets */}
+            <div className="flex gap-2 bg-white/5 rounded-lg p-1">
+              <button onClick={() => setDetailTab("assiduite")} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${detailTab === "assiduite" ? "bg-[#EA5800] text-white" : "text-white/50 hover:bg-white/10"}`}>Assiduité</button>
+              <button onClick={() => setDetailTab("absences")} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${detailTab === "absences" ? "bg-[#EA5800] text-white" : "text-white/50 hover:bg-white/10"}`}>Jours absents ({attAbsent(detail.name).length})</button>
+              <button onClick={() => setDetailTab("commissions")} className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md ${detailTab === "commissions" ? "bg-[#EA5800] text-white" : "text-white/50 hover:bg-white/10"}`}>Commissions</button>
+            </div>
+
+            {detailTab === "assiduite" && (
+            <div className="rounded-lg bg-white/5 border border-white/10">
+              <div className="px-3 py-2 text-xs font-semibold text-white/60 uppercase tracking-wider">Assiduité des adhérents sous ce coach</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/5 bg-white/3">
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Adhérent</th>
+                      <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Présent</th>
+                      <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Absent</th>
+                      <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Total</th>
+                      <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Taux présence</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {pageSlice(assiduiteRows(detail.name), assPage).map((m: any) => {
+                      const tot = m.present + m.absent;
+                      const rate = tot ? Math.round((m.present / tot) * 100) : 0;
+                      return (
+                        <tr key={m.member} className="border-b border-white/5">
+                          <td className="px-3 py-2.5"><div className="flex items-center gap-2">{memberAvatar(m.member)}<span className="font-medium text-white">{m.member}</span></div></td>
+                          <td className="px-3 py-2.5 text-right font-mono text-xs text-emerald-400">{m.present}</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-xs text-red-400">{m.absent}</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-xs text-white/70">{tot}</td>
+                          <td className="px-3 py-2.5 text-right font-mono text-xs text-white/70">{rate}%</td>
+                        </tr>
+                      );
+                    })}
+                    {assiduiteRows(detail.name).length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-white/20 text-sm">{attLoading ? "Chargement..." : "Aucun adhérent sous ce coach"}</td></tr>}
+                  </tbody>
+                </table>
+                {pageBar(assiduiteRows(detail.name).length, assPage, setAssPage)}
+              </div>
+            </div>
+            )}
+
+            {detailTab === "absences" && (
+            <div className="rounded-lg bg-white/5 border border-white/10">
+              <div className="px-3 py-2 text-xs font-semibold text-red-400/80 uppercase tracking-wider">Jours d'absence ({attAbsent(detail.name).length})</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/5 bg-white/3">
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Adhérent</th>
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Date</th>
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Jour</th>
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Cours</th>
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Horaire</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {pageSlice(attAbsent(detail.name), absPage).map((r: any, i: number) => (
+                      <tr key={`${r.member}-${r.date}-${i}`} className="border-b border-white/5">
+                        <td className="px-3 py-2"><div className="flex items-center gap-2">{memberAvatar(r.member)}<span className="text-white/85">{r.member}</span></div></td>
+                        <td className="px-3 py-2 font-mono text-xs text-white/70">{r.dateDisp || r.date}</td>
+                        <td className="px-3 py-2 text-white/70">{r.day}</td>
+                        <td className="px-3 py-2 text-white/80">{r.cours}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-white/60">{r.start_time}–{r.end_time}</td>
+                      </tr>
+                    ))}
+                    {attAbsent(detail.name).length === 0 && <tr><td colSpan={5} className="px-3 py-6 text-center text-white/20 text-sm">{attLoading ? "Chargement..." : "Aucune absence enregistrée"}</td></tr>}
+                  </tbody>
+                </table>
+                {pageBar(attAbsent(detail.name).length, absPage, setAbsPage)}
+              </div>
+            </div>
+            )}
+
+            {detailTab === "commissions" && (
+            <div className="rounded-lg bg-white/5 border border-white/10">
+              <div className="px-3 py-2 text-xs font-semibold text-white/60 uppercase tracking-wider">Commissions à payer par abonnement</div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/5 bg-white/3">
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Adhérent</th>
+                      <th className="px-3 py-2 text-left text-xs text-white/30 uppercase">Abonnement</th>
+                      <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Prix</th>
+                      <th className="px-3 py-2 text-right text-xs text-white/30 uppercase">Commission</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {pageSlice(detailSubs(detail.name), comPage).map((s: any, i: number) => (
+                      <tr key={s.id || i} className="border-b border-white/5">
+                        <td className="px-3 py-2"><div className="flex items-center gap-2">{memberAvatar(s.member)}<span className="font-medium text-white">{s.member}</span></div></td>
+                        <td className="px-3 py-2"><span className="font-mono text-xs text-[#EA5800]">{s.id}</span></td>
+                        <td className="px-3 py-2 text-right font-mono text-xs text-white/60">{Number(s.price || 0).toLocaleString()} DH</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs font-bold text-emerald-400">{subCommission(s)} DH</td>
+                      </tr>
+                    ))}
+                    {detailSubs(detail.name).length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-white/20 text-sm">Aucun abonnement assigné</td></tr>}
+                    {detailSubs(detail.name).length > 0 && (
+                      <tr className="bg-white/3">
+                        <td colSpan={3} className="px-3 py-2 text-right font-semibold text-white/70">Total commissions abonnements</td>
+                        <td className="px-3 py-2 text-right font-mono text-xs font-bold text-emerald-400">{detailSubsTotal(detail.name).toLocaleString()} DH</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+                {pageBar(detailSubs(detail.name).length, comPage, setComPage)}
+              </div>
+            </div>
+            )}
           </div>
         </ModalCard>
       )}
