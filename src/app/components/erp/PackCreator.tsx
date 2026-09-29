@@ -96,12 +96,13 @@ export default function PackCreator({ onClose, onCreated, type = "familial" }: P
           </div>
           <p className="text-[11px] text-white/40 mt-2">Cliquez sur « Parcourir... » pour choisir la photo du pack.</p>
         </div>
+        {plus1 && (
         <div>
           <div className="flex items-center gap-2 mb-2">
             <Package className="w-4 h-4 text-[#EA5800]" />
-            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Activités incluses dans le pack</h3>
+            <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Activités incluses dans le pack +1</h3>
           </div>
-          <p className="text-[11px] text-white/40 mb-2">Cochez les activités qui seront disponibles pour ce pack dans « Créer un abonnement » → section 3. Laissez vide pour tout afficher.</p>
+          <p className="text-[11px] text-white/40 mb-2">Cochez les activités qui seront disponibles pour ce pack +1 dans « Créer un abonnement » → section 3. Laissez vide pour tout afficher.</p>
           {allActs.length === 0 ? (
             <p className="text-[11px] text-white/40 italic">Aucune activité disponible. Créez d'abord des activités dans « Programme & Encadrement ».</p>
           ) : (
@@ -120,7 +121,8 @@ export default function PackCreator({ onClose, onCreated, type = "familial" }: P
             </div>
           )}
         </div>
-        <p className="text-[11px] text-white/50">{plus1 ? "Pack +1 : pour une seule personne (1 bénéficiaire)." : "Le pack couvre jusqu'à 3 bénéficiaires ; chacun conserve son propre accès, présence et tarif."}</p>
+        )}
+        <p className="text-[11px] text-white/50">{plus1 ? "Pack +1 : pour une seule personne (1 bénéficiaire), à qui vous choisissez les activités." : "Pack familial : chaque bénéficiaire choisit ses propres Activités / Groupes / Cours."}</p>
       </div>
       <div className="mt-5 flex justify-end gap-3">
         <button onClick={onClose} className="px-4 py-2 text-sm rounded bg-white/5 text-white/70">Annuler</button>

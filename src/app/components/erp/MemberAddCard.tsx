@@ -95,7 +95,7 @@ export default function MemberAddCard({ form, setForm, onClose, onSave }: Member
             <InputField label="Téléphone" icon={Phone} value={form.phone} onChange={v => setForm({ ...form, phone: v as string })} placeholder="Ex: 0661 234 567" required />
             <InputField label="Email" icon={Mail} value={form.email} onChange={v => setForm({ ...form, email: v as string })} placeholder="Ex: karim.benali@gmail.com" />
             <InputField label="CIN" icon={CreditCard} value={form.cin} onChange={v => setForm({ ...form, cin: v as string })} placeholder="Ex: AB123456" />
-            <SelectField label="Sexe" icon={User} value={form.gender} onChange={v => setForm({ ...form, gender: v })} options={[{ value: "Homme", label: "Homme" }, { value: "Femme", label: "Femme" }]} />
+            <SelectField label="Sexe" icon={User} value={form.gender} onChange={v => setForm({ ...form, gender: v })} options={[{ value: "Homme", label: "Homme" }, { value: "Femme", label: "Femme" }, { value: "Garçon", label: "Garçon" }, { value: "Fille", label: "Fille" }]} />
             <InputField label="Date de naissance" icon={Calendar} value={form.dob} onChange={v => setForm({ ...form, dob: v as string })} placeholder="jj/mm/aaaa" />
           </div>
           <div className="mt-4">

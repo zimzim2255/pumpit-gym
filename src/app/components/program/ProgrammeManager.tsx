@@ -92,7 +92,7 @@ export default function ProgrammeManager() {
       // so it persists and displays after reload.
       if (aid && actType.trim()) {
         const act = store.activities.find((a: any) => a.id === aid);
-        return updateActivity({ id: aid, name: act?.name, type: actType.trim() });
+        return updateActivity({ id: aid, name: act?.name, type: actType.trim() }).then(() => {});
       }
       return Promise.resolve();
     }).then(() => reload()).catch(() => {});

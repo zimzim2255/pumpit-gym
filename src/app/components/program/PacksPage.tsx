@@ -81,7 +81,7 @@ export default function PacksPage() {
                 <td className="px-3 py-3"><span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-xs font-medium">{p.status || "Actif"}</span></td>
                 <td className="px-3 py-3">
                   <div className="flex items-center gap-1.5">
-                    <button onClick={() => openEdit(p)} className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white" title="Injecter des activités"><Settings2 className="w-3.5 h-3.5" /></button>
+                    {(p.pack_type || "familial") === "plus1" && <button onClick={() => openEdit(p)} className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white" title="Injecter des activités"><Settings2 className="w-3.5 h-3.5" /></button>}
                     <button onClick={() => del(p.id)} className="p-1.5 rounded hover:bg-red-500/20 text-white/50 hover:text-red-400" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </td>
