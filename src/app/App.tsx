@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import MemberAddCard from "./components/erp/MemberAddCard";
 import MemberEditCard from "./components/erp/MemberEditCard";
-import SubscriptionAddCard from "./components/erp/SubscriptionAddCard";
+import SubscriptionAddCard, { type SubscriptionForm } from "./components/erp/SubscriptionAddCard";
 import ProgrammeManager from "./components/program/ProgrammeManager";
 import PacksPage from "./components/program/PacksPage";
 import CoachesPage from "./components/program/CoachesPage";
@@ -41,7 +41,7 @@ import ExpenseEditCard from "./components/erp/ExpenseEditCard";
 import MemberDetailCard from "./components/erp/MemberDetailCard";
 
 type ViewId =
-  | "dashboard" | "members" | "subscriptions" | "access" | "history" | "programme" | "packs" | "coaches" | "insurance" | "attendance"
+  | "dashboard" | "members" | "subscriptions" | "access" | "history" | "programme" | "packs" | "coaches" | "insurance" | "presence"
   | "stock" | "sales" | "purchases" | "suppliers" | "staff" | "expenses" | "reports" | "settings" | "caisse" | "cheques" | "attendance" | "reminders";
 
 // ─── mock data ────────────────────────────────────────────────────────────────
@@ -733,7 +733,7 @@ function Subscriptions() {
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const today = new Date().toLocaleDateString("fr-FR");
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<SubscriptionForm>({
     id: "", member: "", phone: "", type: "Mensuel",
     start: today, end: computeEndDate(today, "Mensuel"),
     price: 200, paid: 0, remaining: 200, status: "Non payé",
@@ -811,9 +811,30 @@ function Subscriptions() {
   };
 
   const addSubscription = async () => {
-    // Map member name to member ID if possible
-    const selectedMember = memberNames.find(m => m.name === form.member);
-    const memberId = selectedMember?.id || form.member;
+    // subscriptions.member_id is a NOT NULL FK → members.id. For multi-adhérent /
+    // family-pack abonnements we only track NAMES (form.memberIds / form.packMemberIds),
+    // so the single form.member is empty or a comma-joined label — never a valid id.
+    // Resolve the PRIMARY member from the first covered adhérent that exists in the DB
+    // so we never send a bogus id (which would trip subscriptions_member_id_fkey → 500).
+    const coveredNames: string[] = [];
+    const addCovered = (list: readonly unknown[]) => {
+      for (const raw of list) {
+        const s = String(raw).trim();
+        if (s.length > 0 && !s.includes(",")) coveredNames.push(s);
+      }
+    };
+    addCovered(form.memberIds || []);
+    addCovered(form.packMemberIds || []);
+    addCovered(form.member ? [form.member] : []);
+    let memberId = "";
+    for (const name of coveredNames) {
+      const hit = memberNames.find(m => String(m.name).trim() === name);
+      if (hit) { memberId = hit.id; break; }
+    }
+    if (!memberId) {
+      window.alert("Veuillez sélectionner un adhérent existant avant d'enregistrer l'abonnement.");
+      return;
+    }
 
     const result = await subApi("create", {
       memberId, subType: form.type,
@@ -877,6 +898,8 @@ function Subscriptions() {
       mode: (subscription as any).sub_mode || "nouvel",
       remiseType: (subscription as any).remiseType || "dh",
       packId: (subscription as any).pack_id || "",
+      remise: subscription.remise || 0,
+      commissions: (subscription as any).commissions || {},
     });
     setShowEdit(true);
   };
@@ -2467,7 +2490,7 @@ const NAV: NavItem[] = [
   { id: "packs", label: "Packs & Tarifs", Icon: Package, group: "Gestion" },
   { id: "coaches", label: "Entraîneurs", Icon: Users, group: "Gestion" },
   { id: "insurance", label: "Assurance", Icon: Shield, group: "Gestion" },
-  { id: "attendance", label: "Suivi présence", Icon: Fingerprint, group: "Gestion" },
+  { id: "presence", label: "Suivi présence", Icon: Fingerprint, group: "Gestion" },
   { id: "subscriptions", label: "Abonnements", Icon: CreditCard, group: "Gestion" },
   { id: "access", label: "Contrôle d'accès", Icon: Shield, group: "Accès" },
   { id: "history", label: "Historique accès", Icon: Clock, group: "Accès" },
@@ -2607,7 +2630,7 @@ export default function App() {
       case "packs": return <PacksPage />;
       case "coaches": return <CoachesPage />;
       case "insurance": return <InsurancePage />;
-      case "attendance": return <AttendancePage />;
+      case "presence": return <AttendancePage />;
       case "settings": return <SettingsView />;
       default: return <Dashboard />;
     }

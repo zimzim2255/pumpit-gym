@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Settings2 } from "lucide-react";
+import { Plus, Trash2, Settings2, Package, DollarSign, Calendar, Users } from "lucide-react";
 import PackCreator from "../erp/PackCreator";
 import { loadAll, deletePack, updatePack } from "../../services/programService";
 import ModalCard from "../ui/ModalCard";
+import { InputField, SelectField } from "../ui/FormField";
 
 const STORE_KEY = "gym_programme_data";
 function loadStore(): any {
@@ -12,6 +13,7 @@ function loadStore(): any {
 function actName(id: string): string {
   return loadStore().activities.find((a: any) => a.id === id)?.name || id;
 }
+const DURATIONS = ["1 mois", "3 mois", "6 mois", "12 mois"];
 
 export default function PacksPage() {
   const [packs, setPacks] = useState<any[]>([]);
@@ -20,6 +22,11 @@ export default function PacksPage() {
   const [showCreatePlus1, setShowCreatePlus1] = useState(false);
   const [editPack, setEditPack] = useState<any>(null);
   const [editActs, setEditActs] = useState<string[]>([]);
+  const [editName, setEditName] = useState("");
+  const [editPrice, setEditPrice] = useState(0);
+  const [editDuration, setEditDuration] = useState("12 mois");
+  const [editMaxB, setEditMaxB] = useState(3);
+  const [editStatus, setEditStatus] = useState("Actif");
   const allActs = (loadStore().activities || []) as any[];
   const isPlus1 = (p: any) => (p.pack_type || "familial") === "plus1";
   const viewPacks = packs.filter(p => (tab === "plus1") === isPlus1(p));
@@ -29,16 +36,18 @@ export default function PacksPage() {
   useEffect(() => { refresh(); }, []);
 
   const del = (id: string) => { deletePack(id).then(() => refresh()); };
-  const openEdit = (p: any) => { setEditPack(p); setEditActs((p.activities || []).slice()); };
+  const openEdit = (p: any) => { setEditPack(p); setEditActs((p.activities || []).slice()); setEditName(p.name || ""); setEditPrice(Number(p.price) || 0); setEditDuration(p.duration || "12 mois"); setEditMaxB(Number(p.max_beneficiaries) || 3); setEditStatus(p.status || "Actif"); };
   const toggleEditAct = (id: string) => setEditActs(editActs.includes(id) ? editActs.filter(x => x !== id) : [...editActs, id]);
   const saveEdit = () => {
     if (!editPack) return;
+    const priceNum = editPrice || 0;
+    const finalMax = (editPack.pack_type || "familial") === "plus1" ? 1 : Math.min(3, Math.max(1, editMaxB));
     updatePack({
-      id: editPack.id, name: editPack.name, price: editPack.price, status: editPack.status,
-      photo: editPack.photo, max_beneficiaries: editPack.max_beneficiaries, duration: editPack.duration,
+      id: editPack.id, name: editName.trim(), price: priceNum, status: editStatus,
+      photo: editPack.photo, max_beneficiaries: finalMax, duration: editDuration,
       activities: editActs,
     }).then(() => {
-      try { const s = loadStore(); s.packs = (s.packs || []).map((x: any) => x.id === editPack.id ? { ...x, activities: editActs } : x); localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {}
+      try { const s = loadStore(); s.packs = (s.packs || []).map((x: any) => x.id === editPack.id ? { ...x, name: editName.trim(), price: priceNum, status: editStatus, duration: editDuration, max_beneficiaries: finalMax, activities: editActs } : x); localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch {}
       setEditPack(null); refresh();
     }).catch(e => console.error("updatePack", e));
   };
@@ -81,7 +90,7 @@ export default function PacksPage() {
                 <td className="px-3 py-3"><span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 text-xs font-medium">{p.status || "Actif"}</span></td>
                 <td className="px-3 py-3">
                   <div className="flex items-center gap-1.5">
-                    {(p.pack_type || "familial") === "plus1" && <button onClick={() => openEdit(p)} className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white" title="Injecter des activités"><Settings2 className="w-3.5 h-3.5" /></button>}
+                    <button onClick={() => openEdit(p)} className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white" title="Modifier"><Settings2 className="w-3.5 h-3.5" /></button>
                     <button onClick={() => del(p.id)} className="p-1.5 rounded hover:bg-red-500/20 text-white/50 hover:text-red-400" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
                   </div>
                 </td>
@@ -95,26 +104,48 @@ export default function PacksPage() {
       {showCreatePlus1 && <PackCreator type="plus1" onClose={() => setShowCreatePlus1(false)} onCreated={() => { setShowCreatePlus1(false); refresh(); }} />}
 
       {editPack && (
-        <ModalCard title={`Injecter des activités — ${editPack.name}`} onClose={() => setEditPack(null)} wide>
+        <ModalCard title={`Modifier le pack — ${editName}`} onClose={() => setEditPack(null)} wide>
           <div className="space-y-4">
-            <p className="text-[11px] text-white/50">Seules ces activités s'afficheront dans « Créer un abonnement » → section 3 pour ce pack. Laissez vide pour tout afficher.</p>
-            {allActs.length === 0 ? (
-              <p className="text-[11px] text-white/40 italic">Aucune activité disponible. Créez d'abord des activités dans « Programme & Encadrement ».</p>
-            ) : (
-              <div className="max-h-64 overflow-y-auto border border-white/10 rounded divide-y divide-white/5">
-                {allActs.map(a => {
-                  const checked = editActs.includes(a.id);
-                  return (
-                    <button key={a.id} type="button" onClick={() => toggleEditAct(a.id)} className="w-full text-left px-2 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`w-4 h-4 rounded border shrink-0 inline-flex items-center justify-center ${checked ? "bg-[#EA5800] border-[#EA5800]" : "border-white/25"}`}>{checked ? <span className="text-white text-[10px]">x</span> : null}</span>
-                        <span className="font-medium truncate text-white/90">{a.name}</span>
-                      </div>
-                    </button>
-                  );
-                })}
+            <div className="grid grid-cols-2 gap-4">
+              <InputField label="Nom du pack" icon={Package} value={editName} onChange={v => setEditName(v as string)} placeholder="Ex: Pack familial" required />
+              <InputField label="Prix (DH)" icon={DollarSign} type="number" value={editPrice} onChange={v => setEditPrice(Number(v) || 0)} placeholder="Ex: 499" min={0} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <SelectField label="Durée" icon={Calendar} value={editDuration} onChange={v => setEditDuration(v)} options={[...(DURATIONS.includes(editDuration) ? [] : [{ value: editDuration, label: editDuration }]), ...DURATIONS.map(d => ({ value: d, label: d }))]} />
+              {(editPack.pack_type || "familial") === "plus1" ? (
+                <div>
+                  <label className="block text-xs text-[#94A3B0] mb-1.5 font-medium">Bénéficiaires</label>
+                  <div className="px-3 py-3 rounded-lg bg-white/5 text-sm text-white/70">1 (pack +1)</div>
+                </div>
+              ) : (
+                <InputField label="Bénéficiaires max" icon={Users} type="number" value={editMaxB} onChange={v => setEditMaxB(Number(v) || 1)} placeholder="3" min={1} />
+              )}
+            </div>
+            <SelectField label="Statut" icon={Package} value={editStatus} onChange={v => setEditStatus(v)} options={[{ value: "Actif", label: "Actif" }, { value: "Inactif", label: "Inactif" }]} />
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Package className="w-4 h-4 text-[#EA5800]" />
+                <h3 className="text-sm font-semibold text-white uppercase tracking-wider">Activités incluses</h3>
               </div>
-            )}
+              <p className="text-[11px] text-white/40 mb-2">Cochez les activités disponibles pour ce pack dans « Créer un abonnement » → section 3. Laissez vide pour tout afficher.</p>
+              {allActs.length === 0 ? (
+                <p className="text-[11px] text-white/40 italic">Aucune activité disponible. Créez d'abord des activités dans « Programme & Encadrement ».</p>
+              ) : (
+                <div className="max-h-48 overflow-y-auto border border-white/10 rounded divide-y divide-white/5">
+                  {allActs.map(a => {
+                    const checked = editActs.includes(a.id);
+                    return (
+                      <button key={a.id} type="button" onClick={() => toggleEditAct(a.id)} className="w-full text-left px-2 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-4 h-4 rounded border shrink-0 inline-flex items-center justify-center ${checked ? "bg-[#EA5800] border-[#EA5800]" : "border-white/25"}`}>{checked ? <span className="text-white text-[10px]">x</span> : null}</span>
+                          <span className="font-medium truncate text-white/90">{a.name}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
           <div className="mt-5 flex justify-end gap-3">
             <button onClick={() => setEditPack(null)} className="px-4 py-2 text-sm rounded bg-white/5 text-white/70">Annuler</button>

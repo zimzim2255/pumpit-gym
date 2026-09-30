@@ -7,7 +7,7 @@ import ChequeAddCard from "../door/ChequeAddCard";
 import { SubType } from "../../services/subscriptionService";
 import { loadAll, getAllInsurance } from "../../services/programService";
 import PackCreator from "./PackCreator";
-type SubscriptionForm = {
+export type SubscriptionForm = {
   id: string; member: string; phone: string; type: string; start: string;
   end: string; price: number; paid: number; remaining: number;
   status: string; payment: string; observation: string;
@@ -110,6 +110,14 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
     const end = insByName[name]?.end || (insStore as any)[name]?.end || "";
     return !!end && normDate(end) >= todayStr();
   });
+  // For each person: is their insurance valid, and at what amount.
+  const personIns = selectedPersons.map(name => {
+    const end = insByName[name]?.end || (insStore as any)[name]?.end || "";
+    const amount = Number(insByName[name]?.amount || 0) || Number((insStore as any)[name]?.premium || 0) || 300;
+    return { name, amount, active: !!end && normDate(end) >= todayStr() };
+  });
+  const coveredPeople = personIns.filter(p => p.active);
+  const notCoveredPeople = personIns.filter(p => !p.active);
   // Remise applies only to the base price (NOT the insurance).
   const priceBase = form.price || 0;
   const remiseRaw = Math.max(0, Number(form.remise) || 0);
@@ -394,10 +402,13 @@ export default function SubscriptionAddCard({ form, setForm, onClose, onSave, me
             </div>
             {selectedPersons.length === 0 ? (
               <div className="mt-1 text-white/40">Assurance appliquée automatiquement selon les adhérents sélectionnés.</div>
-            ) : assuranceActive ? (
-              <div className="mt-1 text-emerald-400">✓ Assurance couverte pour {selectedPersons.length} adhérent(s)</div>
+            ) : notCoveredPeople.length === 0 ? (
+              <div className="mt-1 text-emerald-400">✓ Assurance couverte pour {coveredPeople.length} adhérent(s) — {coveredPeople.map(p => p.name).join(", ")}</div>
             ) : (
-              <div className="mt-1 text-red-400">{selectedPersons.length} adhérent(s) — assurance à souscrire ou expirée</div>
+              <div className="mt-1 space-y-0.5">
+                {notCoveredPeople.map(p => <div className="text-red-400">✗ {p.name} — pas d'assurance</div>)}
+                {coveredPeople.map(p => <div className="text-emerald-400">✓ {p.name} — assurance {p.amount} DH</div>)}
+              </div>
             )}
           </div>
           <div className="mt-2 flex justify-between items-center border-t border-white/10 pt-2">

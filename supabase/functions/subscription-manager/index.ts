@@ -45,7 +45,28 @@ serve(async (req: Request) => {
         }
         const subType = subTypeNorm, subStart = subStartNorm, subEnd = subEndNorm;
 
-        const memberId = body.memberId || `ADH${Date.now().toString(36).toUpperCase()}`;
+        const memberIdRaw = (body.memberId || "").toString().trim();
+        // subscriptions.member_id is a NOT NULL FK → members.id. Callers sometimes
+        // only send NAMES (family-pack / multi-adhérent flow) and leave memberId
+        // empty; never fabricate a fake id (that trips subscriptions_member_id_fkey).
+        // Resolve the primary member from the first covered adhérent that exists.
+        let memberId = memberIdRaw;
+        if (!memberId) {
+          const coveredNames = Array.from(new Set(
+            [...(Array.isArray(body.memberIds) ? body.memberIds : []),
+             ...(Array.isArray(body.packMemberIds) ? body.packMemberIds : [])]
+              .map(n => String(n).trim()).filter(n => n.length > 0 && !n.includes(","))
+          ));
+          if (coveredNames.length) {
+            const { data: found } = await supabase
+              .from("members").select("id").in("name", coveredNames).limit(1);
+            if (found && found.length) memberId = found[0].id;
+          }
+        }
+        if (!memberId) return new Response(
+          JSON.stringify({ error: "A valid member is required to create a subscription." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
         const subId = `AB${Date.now().toString(36).toUpperCase()}`;
         const price = body.price || 0;
         const paid = body.paid || 0;

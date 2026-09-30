@@ -4,17 +4,8 @@ import ModalCard from "../ui/ModalCard";
 import { InputField, SelectField, FormActions } from "../ui/FormField";
 import { loadAll, getAllInsurance } from "../../services/programService";
 import { SubType } from "../../services/subscriptionService";
-type SubscriptionForm = {
-  id: string; member: string; phone: string; type: string; start: string;
-  end: string; price: number; paid: number; remaining: number;
-  status: string; payment: string; observation: string;
-  activity: string; group: string; cours: string; trainer: string;
-  packId: string; insurance: boolean; insuranceShown: string;
-  remise: number;
-  remiseType: string;
-  mode: string; memberIds: string[]; packMemberIds: string[]; activityIds: string[]; groupIds: string[]; coursIds: string[];
-  packCourses: Record<string, { activityIds: string[]; groupIds: string[]; coursIds: string[] }>;
-};type Prog = { activities: any[]; groups: any[]; cours: any[]; trainers: any[]; packs: any[] };
+import { type SubscriptionForm } from "./SubscriptionAddCard";
+type Prog = { activities: any[]; groups: any[]; cours: any[]; trainers: any[]; packs: any[] };
 function loadProg(): Prog {
   try { const r = localStorage.getItem("gym_programme_data"); if (r) return JSON.parse(r); } catch {}
   return { activities: [], groups: [], cours: [], trainers: [], packs: [] };
@@ -98,6 +89,14 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
     const end = insByName[name]?.end || (insStore as any)[name]?.end || "";
     return !!end && normDate(end) >= todayYmd();
   });
+  // For each person: is their insurance valid, and at what amount.
+  const personIns = selectedPersons.map(name => {
+    const end = insByName[name]?.end || (insStore as any)[name]?.end || "";
+    const amount = Number(insByName[name]?.amount || 0) || Number((insStore as any)[name]?.premium || 0) || 300;
+    return { name, amount, active: !!end && normDate(end) >= todayYmd() };
+  });
+  const coveredPeople = personIns.filter(p => p.active);
+  const notCoveredPeople = personIns.filter(p => !p.active);
   const priceBase = form.price || 0;
   const remiseRaw = Math.max(0, Number(form.remise) || 0);
   const remise = (form.remiseType || "dh") === "percent"
@@ -312,10 +311,13 @@ export default function SubscriptionEditCard({ form, setForm, onClose, onSave, m
             </div>
             {selectedPersons.length === 0 ? (
               <div className="mt-1 text-white/40">Assurance appliquée automatiquement selon les adhérents sélectionnés.</div>
-            ) : assuranceActive ? (
-              <div className="mt-1 text-emerald-400">✓ Assurance couverte pour {selectedPersons.length} adhérent(s)</div>
+            ) : notCoveredPeople.length === 0 ? (
+              <div className="mt-1 text-emerald-400">✓ Assurance couverte pour {coveredPeople.length} adhérent(s) — {coveredPeople.map(p => p.name).join(", ")}</div>
             ) : (
-              <div className="mt-1 text-red-400">{selectedPersons.length} adhérent(s) — assurance à souscrire ou expirée</div>
+              <div className="mt-1 space-y-0.5">
+                {notCoveredPeople.map(p => <div className="text-red-400">✗ {p.name} — pas d'assurance</div>)}
+                {coveredPeople.map(p => <div className="text-emerald-400">✓ {p.name} — assurance {p.amount} DH</div>)}
+              </div>
             )}
           </div>
           <div className="mt-2 flex justify-between items-center border-t border-white/10 pt-2">
