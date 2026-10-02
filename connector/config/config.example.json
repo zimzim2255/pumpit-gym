@@ -138,6 +138,17 @@
         "source": "cvaccess-db"
       }
     },
+    "cvaccessPg": {
+      "enabled": "${CVACCESS_PG_ENABLED:-true}",
+      "pollIntervalMs": "${CVACCESS_PG_POLL_MS:-1000}",
+      "bin": "${CVACCESS_PG_BIN:-}",
+      "host": "${CVACCESS_DB_HOST:-127.0.0.1}",
+      "port": "${CVACCESS_DB_PORT:-5442}",
+      "database": "${CVACCESS_DB_DATABASE:-biosecurity-boot}",
+      "user": "${CVACCESS_DB_USER:-root}",
+      "password": "${CVACCESS_DB_PASS:-}",
+      "query": "SELECT log_id, pin, event_time, dev_sn, dev_alias, event_no, event_name, verify_mode_no, verify_mode_name FROM public.acc_transaction WHERE log_id > {{since}} ORDER BY log_id ASC LIMIT 100"
+    },
     "mockFingerprint": {
       "enabled": false,
       "intervalMs": 10000,

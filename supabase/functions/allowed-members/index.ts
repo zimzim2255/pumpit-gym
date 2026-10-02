@@ -37,6 +37,58 @@ function parseFrDate(dateStr: string | null): Date | null {
   return new Date(year, month - 1, day);
 }
 
+// ── Strict time-window (TouptiGym rule) ────────────────────────────────────
+// A member may enter ONLY while "now" falls inside one of the scheduled cours
+// linked to their subscription (via subscription_cours -> cours). If no cours
+// is scheduled for this day (or none linked at all) -> denied.
+const FR_DAYS = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+
+function toMin(s: string): number | null {
+  const m = String(s || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+// Local wall-clock moment (configurable offset, Morocco is UTC+1 => +60).
+function localNow(): { dayFr: string; todayYmd: string; minutes: number } {
+  const offset = Number(Deno.env.get("GYM_TZ_OFFSET_MIN") || 60);
+  const t = new Date(Date.now() + offset * 60000);
+  return {
+    dayFr: FR_DAYS[t.getUTCDay()],
+    todayYmd: `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, "0")}-${String(t.getUTCDate()).padStart(2, "0")}`,
+    minutes: t.getUTCHours() * 60 + t.getUTCMinutes(),
+  };
+}
+
+// Returns true if the member is inside one of their linked cours' time window.
+// TouptiGym rule: allowed on the member's training day, from course START − 15 min
+// through course END + 30 min (an entry window around the actual class).
+// HYBRID rule: if the member has NO linked cours (or none scheduled), they are
+// allowed; the time-window is enforced ONLY when a cours is actually linked and
+// its day/time/states can be checked. This prevents locking out valid+paid
+// members who simply don't have a schedule row.
+const ALLOW_BEFORE_MIN = 15; // entry allowed this many minutes before cours start
+const ALLOW_AFTER_MIN = 30;  // entry allowed this many minutes after cours end
+async function inCourseWindow(supabase: any, courseIds: string[]): Promise<boolean> {
+  if (!courseIds.length) return true; // no cours linked => allow (no schedule constraint)
+  const { dayFr, todayYmd, minutes } = localNow();
+  const { data: rows, error } = await supabase
+    .from("cours")
+    .select("day, start_time, end_time, start_date, end_date, status")
+    .in("id", courseIds)
+    .eq("status", "Actif");
+  if (error || !rows || !rows.length) return true; // cours referenced but none active => allow to be safe
+  return rows.some((c: any) => {
+    if (String(c.day || "").trim() !== dayFr) return false;
+    if (c.start_date && todayYmd < String(c.start_date).slice(0, 10)) return false;
+    if (c.end_date && todayYmd > String(c.end_date).slice(0, 10)) return false;
+    const s = toMin(c.start_time), e = toMin(c.end_time);
+    if (s === null || e === null) return false;
+    const lo = s - ALLOW_BEFORE_MIN, hi = e + ALLOW_AFTER_MIN;
+    return minutes >= lo && minutes <= hi;
+  });
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -66,7 +118,7 @@ serve(async (req: Request) => {
     const { data: members } = await supabase.from("members").select("id, status");
     const { data: subs } = await supabase
       .from("subscriptions")
-      .select("member_id, sub_start, sub_end, sub_status, pack_id");
+      .select("id, member_id, sub_start, sub_end, sub_status, pack_id");
 
     const memberStatus = new Map<string, string>();
     for (const m of members || []) memberStatus.set(m.id, m.status);
@@ -92,11 +144,37 @@ serve(async (req: Request) => {
       if (todayNorm >= startDate && todayNorm <= endDate) packIds.add(s.pack_id);
     }
 
-    let packMembers: Array<{ zkteco_id: string }> = [];
+    let packMembers: Array<{ id: string; zkteco_id: string; pack_id: string }> = [];
+    // subscription_id -> cours ids (for the active pack subscriptions)
+    const subCours: Record<string, string[]> = {};
+    // family_pack_members.id -> subscription_id (which sub covers this beneficiary)
+    const packMemberSub: Record<string, string> = {};
     if (packIds.size > 0) {
+      const packSubIds = subs
+        ?.filter((s: any) => s.pack_id && packIds.has(s.pack_id))
+        .map((s: any) => s.id) || [];
+
+      if (packSubIds.length) {
+        const [scRes, spmRes] = await Promise.all([
+          supabase.from("subscription_cours")
+            .select("subscription_id, cours_id")
+            .in("subscription_id", packSubIds),
+          supabase.from("subscription_pack_members")
+            .select("subscription_id, pack_member_id")
+            .in("subscription_id", packSubIds),
+        ]);
+        for (const row of scRes.data || []) {
+          (subCours[row.subscription_id] = subCours[row.subscription_id] || []).push(row.cours_id);
+        }
+        for (const row of spmRes.data || []) {
+          // keep the latest subscription that covers this pack member
+          packMemberSub[row.pack_member_id] = row.subscription_id;
+        }
+      }
+
       const { data: pm } = await supabase
         .from("family_pack_members")
-        .select("zkteco_id")
+        .select("id, zkteco_id, pack_id")
         .in("pack_id", Array.from(packIds))
         .not("zkteco_id", "is", null);
       packMembers = pm || [];
@@ -112,13 +190,29 @@ serve(async (req: Request) => {
       const endDate = parseFrDate(sub.sub_end);
       if (!startDate || !endDate) continue;
       if (todayNorm < startDate || todayNorm > endDate) continue;
+
+      // STRICT TIME-WINDOW: resolve cours linked to THIS subscription (member-level)
+      // and only allow if now is inside one of their scheduled windows.
+      let courseIds: string[] = [];
+      if (sub.id) {
+        const { data: sc } = await supabase
+          .from("subscription_cours")
+          .select("cours_id")
+          .eq("subscription_id", sub.id);
+        courseIds = (sc || []).map((r: any) => r.cours_id).filter(Boolean);
+      }
+      if (!(await inCourseWindow(supabase, courseIds))) continue; // strict: outside window => denied
+
       allowed.push({ userId: memberId, subEnd: sub.sub_end });
       used.add(memberId);
     }
 
-    // Add every pack member
+    // Add every pack member (inside their covering subscription's course window)
     for (const p of packMembers) {
       if (!p.zkteco_id || used.has(p.zkteco_id)) continue;
+      const subId = packMemberSub[p.id];
+      const packCourseIds = subId ? (subCours[subId] || []) : [];
+      if (!(await inCourseWindow(supabase, packCourseIds))) continue; // strict
       allowed.push({ userId: p.zkteco_id, subEnd: "" });
       used.add(p.zkteco_id);
     }

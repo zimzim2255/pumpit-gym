@@ -39,6 +39,61 @@ const VERIFY_MODE_MAP: Record<number, string> = {
   5: "password",
 };
 
+// ── Strict time-window (TouptiGym rule) ────────────────────────────────────
+const FR_DAYS = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+
+function toMin(s: string): number | null {
+  const m = String(s || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+// Local wall-clock moment for a given instant (offset configurable; +60 Morocco).
+function localMoment(ts: string | null | undefined): { dayFr: string; minutes: number } {
+  const base = ts ? new Date(String(ts).replace(" ", "T")) : new Date();
+  if (isNaN(base.getTime())) return { dayFr: "", minutes: -1 };
+  const offset = Number(Deno.env.get("GYM_TZ_OFFSET_MIN") || 60);
+  const t = new Date(base.getTime() + offset * 60000);
+  return { dayFr: FR_DAYS[t.getUTCDay()], minutes: t.getUTCHours() * 60 + t.getUTCMinutes() };
+}
+
+// HYBRID: if the subscription has NO linked cours (or none active), allow; the
+// time-window is enforced only when a cours is actually linked and checkable.
+async function subInCourseWindow(supabase: any, subscriptionId: string, ts: string | null | undefined): Promise<boolean> {
+  if (!subscriptionId) return true;
+  const { data: sc } = await supabase
+    .from("subscription_cours")
+    .select("cours_id")
+    .eq("subscription_id", subscriptionId);
+  const courseIds = (sc || []).map((r: any) => r.cours_id).filter(Boolean);
+  if (!courseIds.length) return true; // no cours linked => allow (no schedule constraint)
+
+  const { dayFr, minutes } = localMoment(ts);
+  if (!dayFr || minutes < 0) return true; // can't determine scan time => allow to be safe
+  const { data: rows, error } = await supabase
+    .from("cours")
+    .select("day, start_time, end_time, start_date, end_date, status")
+    .in("id", courseIds)
+    .eq("status", "Actif");
+  if (error || !rows || !rows.length) return true; // none active => allow to be safe
+
+  // compare the scan's calendar date (local) for cours start/end date windows
+  const base = ts ? new Date(String(ts).replace(" ", "T")) : new Date();
+  const lt = new Date(base.getTime() + (Number(Deno.env.get("GYM_TZ_OFFSET_MIN") || 60)) * 60000);
+  const todayYmd = `${lt.getUTCFullYear()}-${String(lt.getUTCMonth() + 1).padStart(2, "0")}-${String(lt.getUTCDate()).padStart(2, "0")}`;
+
+  return rows.some((c: any) => {
+    if (String(c.day || "").trim() !== dayFr) return false;
+    if (c.start_date && todayYmd < String(c.start_date).slice(0, 10)) return false;
+    if (c.end_date && todayYmd > String(c.end_date).slice(0, 10)) return false;
+    const s = toMin(c.start_time), e = toMin(c.end_time);
+    if (s === null || e === null) return false;
+    // TouptiGym: allowed from START − 15 min through END + 30 min on training day.
+    const lo = s - 15, hi = e + 30;
+    return minutes >= lo && minutes <= hi;
+  });
+}
+
 serve(async (req: Request) => {
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
@@ -187,6 +242,15 @@ serve(async (req: Request) => {
     // ─── Step 4: Check payment status ────────────────────────────────
     if (subscription.sub_status === "Non payé") {
       const msg = "Abonnement non payé";
+      await logDenied(supabase, sessionId, body, method, msg);
+      return respond(sessionId, "DENIED", msg, startTime, body.eventId);
+    }
+
+    // ─── Step 4b: Strict time-window (TouptiGym rule) ────────────────────
+    // Allow entry only while the scan time is inside one of the member's
+    // scheduled cours (day + start/end). Outside a window => denied.
+    if (!(await subInCourseWindow(supabase, subscription.id, body.timestamp))) {
+      const msg = "Hors créneau horaire (votre cours n'est pas encore commencé ou est terminé)";
       await logDenied(supabase, sessionId, body, method, msg);
       return respond(sessionId, "DENIED", msg, startTime, body.eventId);
     }

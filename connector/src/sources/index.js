@@ -7,6 +7,7 @@
 const { OpenApiPoller } = require('./openapiPoller');
 const { PushReceiver } = require('./pushReceiver');
 const { DbPoller } = require('./dbPoller');
+const { PgPoller } = require('./pgPoller');
 const { MockFingerprint } = require('./mockFingerprint');
 
 /**
@@ -44,6 +45,15 @@ async function startSources(loadout, onEvent) {
     await poller.start(onEvent);
     running.push({ name: 'cvaccess-db', src: poller });
     log.info('source.started', { name: 'cvaccess-db' });
+  }
+
+  if (src.cvaccessPg?.enabled) {
+    const poller = new PgPoller({
+      cfg, sourceCfg: src.cvaccessPg, connectorId, log, cursors,
+    });
+    await poller.start(onEvent);
+    running.push({ name: 'cvaccess-pg', src: poller });
+    log.info('source.started', { name: 'cvaccess-pg' });
   }
 
   if (src.mockFingerprint?.enabled) {
