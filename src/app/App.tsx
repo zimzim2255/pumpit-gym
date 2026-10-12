@@ -714,7 +714,73 @@ type Subscription = {
   coursIds?: string[];
   pack_id?: string;
 };
+function printSubscriptionInvoice(s: Subscription) {
+  const escapeHtml = (value: unknown) =>
+    String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[char] as string);
 
+  const invoiceWindow = window.open("", "_blank", "width=900,height=700");
+  if (!invoiceWindow) {
+    alert("Autorisez les fenêtres pop-up pour imprimer la facture.");
+    return;
+  }
+
+  invoiceWindow.document.write(`
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head>
+      <meta charset="UTF-8">
+      <title>Facture abonnement ${escapeHtml(s.id)}</title>
+      <style>
+        @page { size: A4; margin: 20mm; }
+        body { font-family: Arial, sans-serif; color: #222; padding: 20px; }
+        h1 { text-align: center; }
+        .header { text-align: center; border-bottom: 2px solid #222; padding-bottom: 15px; }
+        .details { margin-top: 30px; line-height: 2; }
+        table { width: 100%; border-collapse: collapse; margin-top: 25px; }
+        th, td { border: 1px solid #ccc; padding: 12px; text-align: left; }
+        th { background: #f2f2f2; }
+        .total { font-size: 18px; font-weight: bold; }
+        .footer { margin-top: 50px; text-align: center; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>PUMPIT GYM</h1>
+        <p>FACTURE D'ABONNEMENT</p>
+      </div>
+      <div class="details">
+        <p><strong>N° facture :</strong> ${escapeHtml(s.id)}</p>
+        <p><strong>Date :</strong> ${new Date().toLocaleDateString("fr-FR")}</p>
+        <p><strong>Adhérent :</strong> ${escapeHtml(s.member)}</p>
+        <p><strong>Téléphone :</strong> ${escapeHtml(s.phone)}</p>
+        <p><strong>Type d'abonnement :</strong> ${escapeHtml(s.type)}</p>
+        <p><strong>Date de début :</strong> ${escapeHtml(s.start)}</p>
+        <p><strong>Date de fin :</strong> ${escapeHtml(s.end)}</p>
+      </div>
+      <table>
+        <tr><th>Désignation</th><th>Montant</th></tr>
+        <tr><td>Abonnement ${escapeHtml(s.type)}</td><td>${escapeHtml(s.price)} DH</td></tr>
+        <tr><td>Montant payé</td><td>${escapeHtml(s.paid)} DH</td></tr>
+        <tr><td>Reste à payer</td><td>${escapeHtml(s.remaining)} DH</td></tr>
+      </table>
+      <p class="footer">Merci de votre confiance !</p>
+      <script>
+        window.onload = function() {
+          window.print();
+        };
+      </script>
+    </body>
+    </html>
+  `);
+
+  invoiceWindow.document.close();
+}
 async function subApi(type: string, data?: any) {
   try {
     const res = await fetch(`${FUNCTIONS_URL}/subscription-manager`, {
@@ -1036,14 +1102,7 @@ function Subscriptions() {
                   <ActionIcons
                     onEdit={() => openEditSubscription(s)}
                     onDelete={() => handleDeleteSubscription(s.id)}
-                    onPrint={() => {
-                      // Export CSV for this subscription
-                      downloadCSV([{
-                        id: s.id, member: s.member, phone: s.phone, type: s.type,
-                        start: s.start, end: s.end, price: s.price, paid: s.paid,
-                        remaining: s.remaining, status: s.status,
-                      }], `abonnement_${s.id}`);
-                    }}
+                    onPrint={() => printSubscriptionInvoice(s)}
                   />
                 </td>
               </TR>
